@@ -1,0 +1,1 @@
+export interface Test { status: string; }
