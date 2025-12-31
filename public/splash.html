@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Caricamento Tesoriere</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+        background-color: #0f172a; /* Lo stesso blu scuro dell'app */
+        color: white;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100vh;
+        user-select: none;
+      }
+
+      .container {
+        width: 300px;
+        text-align: center;
+      }
+
+      .logo {
+        font-size: 48px;
+        font-weight: bold;
+        color: #22c55e; /* Green-500 */
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      .logo span {
+        background: #22c55e;
+        color: #000;
+        width: 50px;
+        height: 50px;
+        border-radius: 10px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        margin-right: 10px;
+      }
+
+      .app-name {
+        font-size: 24px;
+        font-weight: bold;
+        margin-bottom: 30px;
+        letter-spacing: 1px;
+      }
+
+      .progress-container {
+        width: 100%;
+        height: 6px;
+        background-color: #1e293b;
+        border-radius: 3px;
+        overflow: hidden;
+        margin-bottom: 10px;
+      }
+
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        background-color: #3b82f6; /* Blue-500 */
+        transition: width 0.4s ease-out;
+      }
+
+      .status-text {
+        font-size: 12px;
+        color: #94a3b8;
+        height: 20px; /* Altezza fissa per non far saltare il layout */
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="logo"><span>T</span> Tesoriere</div>
+      <div class="progress-container">
+        <div id="bar" class="progress-bar"></div>
+      </div>
+      <div id="status" class="status-text">Avvio in corso...</div>
+    </div>
+
+    <script>
+      // Funzione che verrà chiamata dal processo Main
+      window.updateProgress = (percent, text) => {
+        const bar = document.getElementById("bar");
+        const status = document.getElementById("status");
+
+        bar.style.width = percent + "%";
+        if (text) status.innerText = text;
+      };
+    </script>
+  </body>
+</html>

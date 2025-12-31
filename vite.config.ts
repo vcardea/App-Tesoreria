@@ -1,46 +1,37 @@
-
-import { defineConfig } from 'vite'
-import path from 'node:path'
-import electron from 'vite-plugin-electron/simple'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from "vite";
+import path from "node:path";
+import electron from "vite-plugin-electron/simple";
+import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [
     react(),
     electron({
       main: {
-        // Ora il percorso è semplice e diretto
-        entry: 'src/main/index.ts',
+        entry: "src/main/index.ts",
         vite: {
           build: {
-            outDir: 'dist-electron/main', // Output esplicito
+            outDir: "dist-electron/main",
             rollupOptions: {
-                output: { entryFileNames: 'index.js' }
-            }
-          }
-        }
+              // QUI IL TRUCCO: Lasciamo esterno SOLO better-sqlite3
+              // pdf-parse verrà inglobato nel file finale, risolvendo l'errore "Cannot find module"
+              external: ["better-sqlite3"],
+            },
+          },
+        },
       },
       preload: {
-        input: 'src/main/preload.ts',
+        input: "src/main/preload.ts",
         vite: {
-            build: {
-                outDir: 'dist-electron/preload',
-                rollupOptions: {
-                    output: { entryFileNames: 'preload.js' }
-                }
-            }
-        }
+          build: {
+            outDir: "dist-electron/preload",
+            rollupOptions: {
+              external: ["better-sqlite3"],
+            },
+          },
+        },
       },
       renderer: {},
     }),
   ],
-  // NON CAMBIAMO LA ROOT. Rimaniamo nella cartella base.
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-    rollupOptions: {
-        // Diciamo a Vite dove trovare l'HTML
-        input: 'src/renderer/index.html',
-    }
-  }
-})
+});
