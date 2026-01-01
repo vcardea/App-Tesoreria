@@ -1,8 +1,10 @@
 "use strict";
 const electron = require("electron");
 electron.contextBridge.exposeInMainWorld("api", {
+  logAction: (msg) => electron.ipcRenderer.invoke("log-ui-action", msg),
   quitApp: () => electron.ipcRenderer.invoke("quit-app"),
   getBackups: () => electron.ipcRenderer.invoke("get-backups"),
+  openBackupFolder: () => electron.ipcRenderer.invoke("open-backup-folder"),
   restoreBackup: (filename) => electron.ipcRenderer.invoke("restore-backup", filename),
   getSituazione: () => electron.ipcRenderer.invoke("get-situazione"),
   addMovimentoFondo: (data) => electron.ipcRenderer.invoke("add-movimento-fondo", data),

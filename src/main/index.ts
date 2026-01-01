@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from "electron";
+import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
 import path from "path";
 import fs from "fs";
 import {
@@ -17,17 +17,17 @@ import {
   getMovimentiFondo,
   getBackupsList,
   restoreBackup,
+  openBackupFolder,
 } from "./db";
 import { parseBankStatement } from "./pdf_parser";
+import { logSystem } from "./logger";
 
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
 
 let win: BrowserWindow | null = null;
 let splash: BrowserWindow | null = null;
-
-// FIX ICONA: Percorso assoluto sicuro
 const iconPath = process.env.VITE_DEV_SERVER_URL
-  ? path.join(process.cwd(), "public", "icon.png")
+  ? path.join(process.cwd(), "public/icon.png")
   : path.join(__dirname, "../../dist/icon.png");
 
 function getPreloadPath() {
@@ -70,9 +70,11 @@ function createSplashWindow() {
 }
 
 function setupApp() {
+  logSystem("INFO", "--- APPLICAZIONE AVVIATA ---");
   updateSplash(30, "Verifica Backup & Database...");
   setTimeout(() => {
     if (!initDB()) {
+      logSystem("ERROR", "InitDB fallito");
       dialog.showErrorBox("Errore", "Impossibile inizializzare il database.");
       app.quit();
     } else {
@@ -81,8 +83,13 @@ function setupApp() {
     }
   }, 1000);
 
-  // HANDLERS
+  // --- HANDLERS CON LOGGING ---
+  ipcMain.handle("log-ui-action", (e, msg) =>
+    logSystem("ACTION", `[UI] ${msg}`)
+  );
+
   ipcMain.handle("quit-app", () => {
+    logSystem("INFO", "Richiesta chiusura app");
     if (win) win.hide();
     if (!splash || splash.isDestroyed()) createSplashWindow();
     else splash.show();
@@ -95,15 +102,21 @@ function setupApp() {
   });
 
   ipcMain.handle("get-backups", () => getBackupsList());
+  ipcMain.handle("open-backup-folder", () => openBackupFolder());
+
   ipcMain.handle("restore-backup", (e, filename) => {
+    logSystem("ACTION", `Tentativo ripristino backup: ${filename}`);
     if (restoreBackup(filename)) {
+      logSystem("INFO", "Ripristino riuscito, riavvio app...");
       app.relaunch();
       app.exit(0);
+    } else {
+      logSystem("ERROR", "Ripristino fallito");
     }
     return false;
   });
 
-  // DB API
+  // DB Handlers
   ipcMain.handle("get-situazione", () => getSituazioneGlobale());
   ipcMain.handle("add-movimento-fondo", (e, d) =>
     addMovimentoFondo(d.importo, d.descrizione)
@@ -118,7 +131,6 @@ function setupApp() {
   ipcMain.handle("update-quota", (e, d) => updateQuota(d.id, d.qta, d.versato));
   ipcMain.handle("completa-acquisto", (e, id) => setAcquistoCompletato(id));
 
-  // PDF
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
@@ -126,11 +138,14 @@ function setupApp() {
     });
     return res.canceled ? null : res.filePaths[0];
   });
+
   ipcMain.handle("analyze-pdf", async (e, p) => {
+    logSystem("INFO", `Analisi PDF richiesta: ${p}`);
     try {
       return await parseBankStatement(p, getMembri());
-    } catch {
-      return [];
+    } catch (err: any) {
+      logSystem("ERROR", "Errore parsing PDF", err.message);
+      throw err;
     }
   });
 }

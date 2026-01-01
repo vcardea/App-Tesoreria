@@ -1,8 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("api", {
+  logAction: (msg: string) => ipcRenderer.invoke("log-ui-action", msg),
   quitApp: () => ipcRenderer.invoke("quit-app"),
+
   getBackups: () => ipcRenderer.invoke("get-backups"),
+  openBackupFolder: () => ipcRenderer.invoke("open-backup-folder"),
   restoreBackup: (filename: string) =>
     ipcRenderer.invoke("restore-backup", filename),
 

@@ -53,7 +53,7 @@ export async function parseBankStatement(
     const matches: TransactionMatch[] = [];
 
     // Regex Italiana: cattura 1.000,00 o 25,50
-    const moneyRegex = /([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})/;
+    const moneyRegex = /[\d.,]+[.,]\d{2}/;
 
     for (let i = 0; i < lines.length; i++) {
       const currentLine = normalize(lines[i]);

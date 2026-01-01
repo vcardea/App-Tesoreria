@@ -21,6 +21,7 @@ import {
   ArrowRight,
   Banknote,
   Scale,
+  FolderOpen,
 } from "lucide-react";
 
 const formatCurrency = (amount: number) =>
@@ -30,6 +31,28 @@ const formatCurrency = (amount: number) =>
 const cleanInput = (val: string) =>
   val.toUpperCase().replace(/[^A-Z0-9À-ÖØ-öø-ÿ' ]/g, "");
 const formatDate = (iso: string) => new Date(iso).toLocaleString("it-IT");
+
+// --- TYPESCRIPT FIX ---
+interface Quota {
+  id: number;
+  membro_id: number;
+  nome: string;
+  cognome: string;
+  matricola: string;
+  quantita: number;
+  importo_versato: number;
+}
+interface Window {
+  api: any;
+}
+declare var window: Window;
+
+// --- LOGGER HELPER ---
+const log = (msg: string) => {
+  try {
+    window.api.logAction(msg);
+  } catch (e) {}
+};
 
 // --- MODALE UNIFICATO ---
 const CustomModal = ({
@@ -41,7 +64,6 @@ const CustomModal = ({
   variant = "neutral",
 }: any) => {
   if (!isOpen) return null;
-
   const styles = {
     neutral: {
       border: "border-gray-700",
@@ -69,7 +91,6 @@ const CustomModal = ({
     },
   };
   const currentStyle = styles[variant as keyof typeof styles] || styles.neutral;
-
   return (
     <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div
@@ -106,8 +127,6 @@ const CustomModal = ({
 
 function App() {
   const [activeTab, setActiveTab] = useState("dashboard");
-
-  // Dati
   const [situazione, setSituazione] = useState({
     fondo_cassa_reale: 0,
     fondi_vincolati: 0,
@@ -116,7 +135,7 @@ function App() {
   const [membri, setMembri] = useState([]);
   const [acquisti, setAcquisti] = useState([]);
   const [selectedAcquisto, setSelectedAcquisto] = useState<any>(null);
-  const [quote, setQuote] = useState([]);
+  const [quote, setQuote] = useState<Quota[]>([]); // Typed
   const [movimentiFondo, setMovimentiFondo] = useState([]);
   const [backups, setBackups] = useState([]);
 
@@ -148,9 +167,7 @@ function App() {
 
   const loadData = async () => {
     try {
-      // @ts-ignore
       const [sit, mem, acq, mov, bak] = await Promise.all([
-        // @ts-ignore
         window.api.getSituazione(),
         window.api.getMembri(),
         window.api.getAcquisti(),
@@ -173,7 +190,8 @@ function App() {
 
   // ACTIONS
   const handleQuit = () => {
-    /* @ts-ignore */ window.api.quitApp();
+    log("Click Salva ed Esci");
+    window.api.quitApp();
   };
   const openAlert = (title: string, msg: string) =>
     setModal({ view: "alert", data: { title, msg } });
@@ -181,7 +199,7 @@ function App() {
   const handleAddMembro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMembro.nome || !newMembro.cognome) return;
-    // @ts-ignore
+    log(`Aggiunta membro: ${newMembro.cognome}`);
     await window.api.addMembro(newMembro);
     setNewMembro({ nome: "", cognome: "", matricola: "" });
     loadData();
@@ -189,7 +207,7 @@ function App() {
 
   const confirmDeleteMembro = async () => {
     if (modal.data?.id) {
-      // @ts-ignore
+      log(`Conferma eliminazione membro ID ${modal.data.id}`);
       await window.api.deleteMembro(modal.data.id);
       loadData();
       setModal({ view: "none" });
@@ -198,7 +216,7 @@ function App() {
 
   const handleCreateAcquisto = async () => {
     if (!newAcq.nome || !newAcq.prezzo) return;
-    // @ts-ignore
+    log(`Creazione acquisto: ${newAcq.nome}`);
     await window.api.createAcquisto({
       nome: newAcq.nome,
       prezzo: parseFloat(newAcq.prezzo),
@@ -210,8 +228,8 @@ function App() {
   const handleSelectAcquisto = async (a: any) => {
     setQuote([]);
     setSelectedAcquisto(a);
-    // @ts-ignore
-    setQuote(await window.api.getQuote(a.id));
+    const q = await window.api.getQuote(a.id);
+    setQuote(q);
   };
 
   const handleUpdateQuota = async (
@@ -220,18 +238,17 @@ function App() {
     versato: number
   ) => {
     if (isNaN(versato)) versato = 0;
-    // @ts-ignore
     await window.api.updateQuota({ id, qta: quantita, versato });
-    // @ts-ignore
-    setQuote(await window.api.getQuote(selectedAcquisto.id));
-    // @ts-ignore
+    const q = await window.api.getQuote(selectedAcquisto.id);
+    setQuote(q);
     setSituazione(await window.api.getSituazione());
   };
 
   const prepareCompleteAcquisto = () => {
+    log("Apertura modale completamento acquisto");
     let dovuto = 0,
       versato = 0;
-    quote.forEach((q: any) => {
+    quote.forEach((q) => {
       dovuto += q.quantita * selectedAcquisto.prezzo_unitario;
       versato += q.importo_versato;
     });
@@ -244,12 +261,12 @@ function App() {
 
   const confirmCompleteAcquisto = async () => {
     if (modal.data?.id) {
-      // @ts-ignore
+      log(`Conferma chiusura acquisto ID ${modal.data.id}`);
       await window.api.completaAcquisto(modal.data.id);
       await loadData();
       setSelectedAcquisto({ ...selectedAcquisto, completato: 1 });
-      // @ts-ignore
-      setQuote(await window.api.getQuote(modal.data.id));
+      const q = await window.api.getQuote(modal.data.id);
+      setQuote(q);
       setModal({ view: "none" });
     }
   };
@@ -257,7 +274,7 @@ function App() {
   const handleAddFondo = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMovimentoFondo.importo || !newMovimentoFondo.descrizione) return;
-    // @ts-ignore
+    log(`Movimento fondo: ${newMovimentoFondo.importo}`);
     await window.api.addMovimentoFondo({
       importo: parseFloat(newMovimentoFondo.importo),
       descrizione: newMovimentoFondo.descrizione,
@@ -269,16 +286,16 @@ function App() {
 
   const confirmRestore = async () => {
     if (modal.data?.filename) {
-      /* @ts-ignore */ await window.api.restoreBackup(modal.data.filename);
+      log(`Ripristino backup avviato: ${modal.data.filename}`);
+      await window.api.restoreBackup(modal.data.filename);
     }
   };
 
   const handlePdfUpload = async () => {
-    // @ts-ignore
+    log("Apertura selezione PDF");
     const path = await window.api.selectFile();
     if (!path) return;
     try {
-      // @ts-ignore
       const matches = await window.api.analyzePdf(path);
       if (matches.length === 0) {
         openAlert(
@@ -296,11 +313,11 @@ function App() {
   };
 
   const confirmImportPdf = async () => {
+    log(`Importazione ${selectedMatches.length} righe da PDF`);
     for (const index of selectedMatches) {
       const match = pdfMatches[index];
-      const quota = quote.find((q: any) => q.membro_id === match.membro_id);
+      const quota = quote.find((q) => q.membro_id === match.membro_id);
       if (quota) {
-        // @ts-ignore
         await window.api.updateQuota({
           id: quota.id,
           qta: quota.quantita,
@@ -315,7 +332,7 @@ function App() {
 
   return (
     <div className="flex h-screen bg-gray-950 text-white font-sans overflow-hidden relative">
-      {/* ALERT */}
+      {/* MODALI (CODICE RIMASTO INVARIATO GRAZIE A CUSTOMMODAL, HO TOLTO SOLO I RIFERIMENTI A TS IGNORE) */}
       <CustomModal
         isOpen={modal.view === "alert"}
         title={modal.data?.title}
@@ -333,7 +350,6 @@ function App() {
         <p className="whitespace-pre-wrap text-lg">{modal.data?.msg}</p>
       </CustomModal>
 
-      {/* DELETE CONFIRM */}
       <CustomModal
         isOpen={modal.view === "confirm_delete"}
         title="Elimina Membro"
@@ -343,42 +359,42 @@ function App() {
           <>
             <button
               onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold transition"
             >
               Annulla
             </button>
             <button
               onClick={confirmDeleteMembro}
-              className="px-4 py-2 rounded bg-red-600 font-bold text-white shadow-lg hover:bg-red-500"
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg transition"
             >
-              Elimina
+              Conferma Eliminazione
             </button>
           </>
         }
       >
         <p className="text-lg">
-          Stai eliminando un membro e <b>tutto il suo storico</b>.
+          Stai per eliminare un membro. Verrà rimosso anche{" "}
+          <b>tutto lo storico</b> dei suoi pagamenti.
         </p>
         <p className="mt-2 text-sm opacity-70">Azione irreversibile.</p>
       </CustomModal>
 
-      {/* RESTORE CONFIRM */}
       <CustomModal
         isOpen={modal.view === "confirm_restore"}
-        title="Ripristino"
+        title="Ripristino Database"
         onClose={() => setModal({ view: "none" })}
         variant="warning"
         actions={
           <>
             <button
               onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
             >
               Annulla
             </button>
             <button
               onClick={confirmRestore}
-              className="px-4 py-2 rounded bg-blue-600 font-bold text-white shadow-lg hover:bg-blue-500"
+              className="px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 font-bold text-white shadow-lg"
             >
               Riavvia e Ripristina
             </button>
@@ -386,11 +402,11 @@ function App() {
         }
       >
         <p className="text-lg">
-          Sovrascrivere i dati attuali con il backup? L'app si riavvierà.
+          Stai per sovrascrivere i dati attuali con il backup selezionato.
+          L'applicazione verrà riavviata immediatamente.
         </p>
       </CustomModal>
 
-      {/* --- NUOVO MODALE CONFERMA ACQUISTO --- */}
       <CustomModal
         isOpen={modal.view === "confirm_purchase"}
         title="Riepilogo Chiusura"
@@ -436,7 +452,6 @@ function App() {
                 </span>
               </div>
             </div>
-
             <div
               className={`p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center ${
                 modal.data.diff > 0
@@ -479,7 +494,6 @@ function App() {
         )}
       </CustomModal>
 
-      {/* FONDO */}
       <CustomModal
         isOpen={modal.view === "fondo"}
         title="Fondo Manuale"
@@ -526,7 +540,6 @@ function App() {
         </form>
       </CustomModal>
 
-      {/* PDF */}
       {modal.view === "pdf" && (
         <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8 animate-in zoom-in-95 duration-200">
           <div className="bg-gray-900 w-full max-w-5xl h-[85vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col">
@@ -601,7 +614,7 @@ function App() {
         </div>
       )}
 
-      {/* SIDEBAR & MAIN (Stesso layout di prima) */}
+      {/* SIDEBAR */}
       <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-4">
         <h1 className="text-xl font-bold mb-8 px-2 text-green-500 flex items-center">
           <span className="bg-green-500 text-black w-8 h-8 flex items-center justify-center rounded-lg mr-2 font-bold">
@@ -932,7 +945,7 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {quote.map((q: any) => {
+                        {quote.map((q) => {
                           const dov =
                             q.quantita * selectedAcquisto.prezzo_unitario;
                           const err =
@@ -1004,22 +1017,28 @@ function App() {
           <div>
             <h2 className="text-3xl font-bold mb-8 text-white">Backup</h2>
             <div className="bg-gray-900 p-8 rounded-2xl border border-gray-800">
-              <h3 className="text-xl font-bold mb-4 text-blue-400">
-                Punti di Ripristino
-              </h3>
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-xl font-bold text-blue-400">
+                  Punti di Ripristino
+                </h3>
+                <button
+                  onClick={() => window.api.openBackupFolder()}
+                  className="bg-gray-800 text-white px-4 py-2 rounded flex items-center hover:bg-gray-700 transition"
+                >
+                  <FolderOpen className="mr-2" size={18} /> Apri Cartella
+                </button>
+              </div>
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
                   <tr>
-                    <th className="p-4">Data</th>
+                    <th className="p-4">File</th>
                     <th className="p-4 text-right">Azione</th>
                   </tr>
                 </thead>
                 <tbody>
                   {backups.map((b: any) => (
                     <tr key={b.name} className="border-b border-gray-800">
-                      <td className="p-4 font-mono text-green-400">
-                        {formatDate(b.date)}
-                      </td>
+                      <td className="p-4 font-mono text-green-400">{b.name}</td>
                       <td className="p-4 text-right">
                         <button
                           onClick={() =>

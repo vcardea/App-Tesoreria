@@ -1,80 +1,91 @@
 import Database from "better-sqlite3";
 import path from "path";
-import { app } from "electron";
+import { app, shell } from "electron";
 import fs from "fs";
+import { logSystem } from "./logger";
 
 const userDataPath = app.getPath("userData");
 const dbPath = path.join(userDataPath, "tesoriere.db");
 const backupDir = path.join(userDataPath, "backups");
 
-// Assicuriamoci che le cartelle esistano
 if (!fs.existsSync(userDataPath))
   fs.mkdirSync(userDataPath, { recursive: true });
 if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
 let db: Database.Database;
 
-// --- GESTIONE BACKUP ---
+// --- BACKUP SYSTEM 2.0 (Ordinamento per nome) ---
 function performBackup() {
-  if (fs.existsSync(dbPath)) {
-    try {
-      const now = new Date();
-      // Costruzione manuale per garantire l'ora locale corretta
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, "0");
-      const dd = String(now.getDate()).padStart(2, "0");
-      const hh = String(now.getHours()).padStart(2, "0");
-      const min = String(now.getMinutes()).padStart(2, "0");
-      const ss = String(now.getSeconds()).padStart(2, "0");
+  if (!fs.existsSync(dbPath)) return;
 
-      const timestamp = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
-      const backupPath = path.join(backupDir, `backup_${timestamp}.db`);
+  try {
+    const now = new Date();
+    // Formato rigoroso: YYYY-MM-DD_HH-mm-ss
+    const timestamp =
+      now.getFullYear() +
+      "-" +
+      String(now.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(now.getDate()).padStart(2, "0") +
+      "_" +
+      String(now.getHours()).padStart(2, "0") +
+      "-" +
+      String(now.getMinutes()).padStart(2, "0") +
+      "-" +
+      String(now.getSeconds()).padStart(2, "0");
 
-      fs.copyFileSync(dbPath, backupPath);
-      console.log(`✅ Backup Eseguito: ${backupPath}`);
+    const backupName = `backup_${timestamp}.db`;
+    const backupPath = path.join(backupDir, backupName);
 
-      deleteOldBackups(15);
-    } catch (e) {
-      console.error("❌ Errore backup:", e);
-    }
+    fs.copyFileSync(dbPath, backupPath);
+    logSystem("INFO", `Backup creato: ${backupName}`);
+
+    cleanOldBackups();
+  } catch (e) {
+    logSystem("ERROR", "Errore creazione backup", e);
   }
 }
 
-function deleteOldBackups(keepCount: number) {
+function cleanOldBackups() {
   try {
+    // 1. Leggi tutti i file che iniziano con 'backup_'
     const files = fs
       .readdirSync(backupDir)
-      .filter((f) => f.startsWith("backup_") && f.endsWith(".db"))
-      .map((f) => ({
-        name: f,
-        time: fs.statSync(path.join(backupDir, f)).mtime.getTime(),
-      }))
-      .sort((a, b) => b.time - a.time); // Ordina dal più recente
+      .filter((f) => f.startsWith("backup_") && f.endsWith(".db"));
 
-    if (files.length > keepCount) {
-      const toDelete = files.slice(keepCount);
-      toDelete.forEach((f) => fs.unlinkSync(path.join(backupDir, f.name)));
+    // 2. Ordina alfabeticamente (inverso: dal più nuovo al più vecchio)
+    // Essendo ISO timestamp nel nome, l'ordine alfabetico = ordine cronologico
+    files.sort().reverse();
+
+    // 3. Se ce ne sono più di 10, cancella gli eccedenti (quelli in fondo alla lista)
+    if (files.length > 10) {
+      const toDelete = files.slice(10);
+      toDelete.forEach((f) => {
+        fs.unlinkSync(path.join(backupDir, f));
+        logSystem("INFO", `Backup ruotato (eliminato): ${f}`);
+      });
     }
   } catch (e) {
-    console.error(e);
+    logSystem("ERROR", "Errore pulizia backup", e);
   }
+}
+
+export function openBackupFolder() {
+  shell.openPath(backupDir);
 }
 
 export function getBackupsList() {
   try {
+    // Ritorna la lista ordinata per data (nome) decrescente
     return fs
       .readdirSync(backupDir)
       .filter((f) => f.endsWith(".db"))
+      .sort()
+      .reverse()
       .map((f) => {
         const stat = fs.statSync(path.join(backupDir, f));
-        return {
-          name: f,
-          date: stat.mtime,
-          size: stat.size,
-          path: path.join(backupDir, f),
-        };
-      })
-      .sort((a, b) => b.date.getTime() - a.date.getTime());
+        return { name: f, date: stat.mtime, size: stat.size };
+      });
   } catch (e) {
     return [];
   }
@@ -82,28 +93,28 @@ export function getBackupsList() {
 
 export function restoreBackup(filename: string) {
   try {
-    if (db) db.close();
+    if (db && db.open) db.close();
     const source = path.join(backupDir, filename);
+
+    if (!fs.existsSync(source)) throw new Error("File backup non trovato");
+
     fs.copyFileSync(source, dbPath);
-    console.log(`♻️ Database ripristinato da ${filename}`);
+    logSystem("ACTION", `Database ripristinato da: ${filename}`);
     return true;
   } catch (e) {
-    console.error("Errore restore:", e);
+    logSystem("ERROR", "Fallimento ripristino backup", e);
     return false;
   }
 }
 
+// --- DB INIT ---
 export function initDB() {
   try {
-    // 1. PRIMA DI TUTTO: BACKUP
-    performBackup();
-
-    // 2. POI APERTURA DB
+    performBackup(); // Esegue backup PRIMA di aprire
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
     db.pragma("foreign_keys = ON");
 
-    // STRUTTURA TABELLE
     db.exec(
       `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL, matricola TEXT);`
     );
@@ -117,9 +128,10 @@ export function initDB() {
       `CREATE TABLE IF NOT EXISTS fondo_cassa (id INTEGER PRIMARY KEY AUTOINCREMENT, importo REAL NOT NULL, descrizione TEXT, data DATETIME DEFAULT CURRENT_TIMESTAMP);`
     );
 
+    logSystem("DB", "Database inizializzato correttamente");
     return true;
   } catch (error) {
-    console.error("❌ Errore critico DB:", error);
+    logSystem("ERROR", "Errore critico inizializzazione DB", error);
     return false;
   }
 }
@@ -127,62 +139,75 @@ export function initDB() {
 export function closeDB() {
   if (db && db.open) {
     db.close();
-    console.log("🔒 Database chiuso.");
+    logSystem("DB", "Database chiuso");
   }
 }
 
-// --- CONTABILITÀ & DATI ---
+// --- CONTABILITÀ ---
 export function getSituazioneGlobale() {
-  const entrate = db
-    .prepare(
-      `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
-    )
-    .get() as any;
-  const uscite = db
-    .prepare(
-      `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
-    )
-    .get() as any;
-  const vincolati = db
-    .prepare(
-      `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
-    )
-    .get() as any;
-  const reale = (entrate.total || 0) - (uscite.total || 0);
-  return {
-    fondo_cassa_reale: reale,
-    fondi_vincolati: vincolati.total || 0,
-    disponibile_effettivo: reale - (vincolati.total || 0),
-  };
+  try {
+    const entrate = db
+      .prepare(
+        `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
+      )
+      .get() as any;
+    const uscite = db
+      .prepare(
+        `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
+      )
+      .get() as any;
+    const vincolati = db
+      .prepare(
+        `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
+      )
+      .get() as any;
+    return {
+      fondo_cassa_reale: (entrate.total || 0) - (uscite.total || 0),
+      fondi_vincolati: vincolati.total || 0,
+      disponibile_effettivo:
+        (entrate.total || 0) - (uscite.total || 0) - (vincolati.total || 0),
+    };
+  } catch (e) {
+    logSystem("ERROR", "getSituazioneGlobale", e);
+    return {
+      fondo_cassa_reale: 0,
+      fondi_vincolati: 0,
+      disponibile_effettivo: 0,
+    };
+  }
 }
 
 export function addMovimentoFondo(importo: number, descrizione: string) {
+  logSystem("ACTION", `Movimento Fondo: ${importo}€ - ${descrizione}`);
   return db
     .prepare("INSERT INTO fondo_cassa (importo, descrizione) VALUES (?, ?)")
     .run(importo, descrizione);
 }
-export function getMovimentiFondo(limit = 20) {
+export function getMovimentiFondo(limit = 50) {
   return db
     .prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT ?")
     .all(limit);
 }
 
-// Membri
+// --- MEMBRI ---
 export function getMembri() {
   return db.prepare("SELECT * FROM membri ORDER BY cognome ASC").all();
 }
 export function addMembro(m: any) {
+  logSystem("ACTION", "Aggiunta membro", m);
   const matr = m.matricola && m.matricola.trim() !== "" ? m.matricola : null;
   return db
     .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
     .run(m.nome, m.cognome, matr);
 }
 export function deleteMembro(id: number) {
+  logSystem("ACTION", `Eliminazione membro ID: ${id}`);
   return db.prepare("DELETE FROM membri WHERE id = ?").run(id);
 }
 
-// Acquisti
+// --- ACQUISTI ---
 export function createAcquisto(nome: string, prezzo: number) {
+  logSystem("ACTION", `Nuovo acquisto: ${nome} a ${prezzo}€`);
   const trx = db.transaction(() => {
     const info = db
       .prepare(
@@ -211,6 +236,7 @@ export function getQuoteAcquisto(id: number) {
     .all(id);
 }
 export function updateQuota(id: number, q: number, v: number) {
+  // Non logghiamo ogni keystroke, ma potremmo loggare se necessario
   return db
     .prepare(
       "UPDATE quote_membri SET quantita = ?, importo_versato = ? WHERE id = ?"
@@ -218,5 +244,6 @@ export function updateQuota(id: number, q: number, v: number) {
     .run(q, v, id);
 }
 export function setAcquistoCompletato(id: number) {
+  logSystem("ACTION", `Acquisto completato ID: ${id}`);
   return db.prepare("UPDATE acquisti SET completato = 1 WHERE id = ?").run(id);
 }

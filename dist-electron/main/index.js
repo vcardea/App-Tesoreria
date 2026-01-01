@@ -3,6 +3,32 @@ const electron = require("electron");
 const path = require("path");
 const fs = require("fs");
 const Database = require("better-sqlite3");
+const logPath = path.join(electron.app.getPath("userData"), "system.log");
+if (!fs.existsSync(logPath)) {
+  fs.writeFileSync(
+    logPath,
+    `--- LOG INIZIATO IL ${(/* @__PURE__ */ new Date()).toLocaleString()} ---
+`
+  );
+}
+function logSystem(level, message, data) {
+  const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  let logLine = `[${timestamp}] [${level}] ${message}`;
+  if (data) {
+    try {
+      logLine += ` | DATA: ${JSON.stringify(data)}`;
+    } catch (e) {
+      logLine += ` | DATA: [Circular/Unserializable]`;
+    }
+  }
+  logLine += "\n";
+  try {
+    fs.appendFileSync(logPath, logLine);
+    console.log(logLine.trim());
+  } catch (e) {
+    console.error("Fallimento scrittura log:", e);
+  }
+}
 const userDataPath = electron.app.getPath("userData");
 const dbPath = path.join(userDataPath, "tesoriere.db");
 const backupDir = path.join(userDataPath, "backups");
@@ -11,63 +37,57 @@ if (!fs.existsSync(userDataPath))
 if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 let db;
 function performBackup() {
-  if (fs.existsSync(dbPath)) {
-    try {
-      const now = /* @__PURE__ */ new Date();
-      const yyyy = now.getFullYear();
-      const mm = String(now.getMonth() + 1).padStart(2, "0");
-      const dd = String(now.getDate()).padStart(2, "0");
-      const hh = String(now.getHours()).padStart(2, "0");
-      const min = String(now.getMinutes()).padStart(2, "0");
-      const ss = String(now.getSeconds()).padStart(2, "0");
-      const timestamp = `${yyyy}-${mm}-${dd}_${hh}-${min}-${ss}`;
-      const backupPath = path.join(backupDir, `backup_${timestamp}.db`);
-      fs.copyFileSync(dbPath, backupPath);
-      console.log(`✅ Backup Eseguito: ${backupPath}`);
-      deleteOldBackups(15);
-    } catch (e) {
-      console.error("❌ Errore backup:", e);
-    }
+  if (!fs.existsSync(dbPath)) return;
+  try {
+    const now = /* @__PURE__ */ new Date();
+    const timestamp = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0") + "_" + String(now.getHours()).padStart(2, "0") + "-" + String(now.getMinutes()).padStart(2, "0") + "-" + String(now.getSeconds()).padStart(2, "0");
+    const backupName = `backup_${timestamp}.db`;
+    const backupPath = path.join(backupDir, backupName);
+    fs.copyFileSync(dbPath, backupPath);
+    logSystem("INFO", `Backup creato: ${backupName}`);
+    cleanOldBackups();
+  } catch (e) {
+    logSystem("ERROR", "Errore creazione backup", e);
   }
 }
-function deleteOldBackups(keepCount) {
+function cleanOldBackups() {
   try {
-    const files = fs.readdirSync(backupDir).filter((f) => f.startsWith("backup_") && f.endsWith(".db")).map((f) => ({
-      name: f,
-      time: fs.statSync(path.join(backupDir, f)).mtime.getTime()
-    })).sort((a, b) => b.time - a.time);
-    if (files.length > keepCount) {
-      const toDelete = files.slice(keepCount);
-      toDelete.forEach((f) => fs.unlinkSync(path.join(backupDir, f.name)));
+    const files = fs.readdirSync(backupDir).filter((f) => f.startsWith("backup_") && f.endsWith(".db"));
+    files.sort().reverse();
+    if (files.length > 10) {
+      const toDelete = files.slice(10);
+      toDelete.forEach((f) => {
+        fs.unlinkSync(path.join(backupDir, f));
+        logSystem("INFO", `Backup ruotato (eliminato): ${f}`);
+      });
     }
   } catch (e) {
-    console.error(e);
+    logSystem("ERROR", "Errore pulizia backup", e);
   }
+}
+function openBackupFolder() {
+  electron.shell.openPath(backupDir);
 }
 function getBackupsList() {
   try {
-    return fs.readdirSync(backupDir).filter((f) => f.endsWith(".db")).map((f) => {
+    return fs.readdirSync(backupDir).filter((f) => f.endsWith(".db")).sort().reverse().map((f) => {
       const stat = fs.statSync(path.join(backupDir, f));
-      return {
-        name: f,
-        date: stat.mtime,
-        size: stat.size,
-        path: path.join(backupDir, f)
-      };
-    }).sort((a, b) => b.date.getTime() - a.date.getTime());
+      return { name: f, date: stat.mtime, size: stat.size };
+    });
   } catch (e) {
     return [];
   }
 }
 function restoreBackup(filename) {
   try {
-    if (db) db.close();
+    if (db && db.open) db.close();
     const source = path.join(backupDir, filename);
+    if (!fs.existsSync(source)) throw new Error("File backup non trovato");
     fs.copyFileSync(source, dbPath);
-    console.log(`♻️ Database ripristinato da ${filename}`);
+    logSystem("ACTION", `Database ripristinato da: ${filename}`);
     return true;
   } catch (e) {
-    console.error("Errore restore:", e);
+    logSystem("ERROR", "Fallimento ripristino backup", e);
     return false;
   }
 }
@@ -89,52 +109,65 @@ function initDB() {
     db.exec(
       `CREATE TABLE IF NOT EXISTS fondo_cassa (id INTEGER PRIMARY KEY AUTOINCREMENT, importo REAL NOT NULL, descrizione TEXT, data DATETIME DEFAULT CURRENT_TIMESTAMP);`
     );
+    logSystem("DB", "Database inizializzato correttamente");
     return true;
   } catch (error) {
-    console.error("❌ Errore critico DB:", error);
+    logSystem("ERROR", "Errore critico inizializzazione DB", error);
     return false;
   }
 }
 function closeDB() {
   if (db && db.open) {
     db.close();
-    console.log("🔒 Database chiuso.");
+    logSystem("DB", "Database chiuso");
   }
 }
 function getSituazioneGlobale() {
-  const entrate = db.prepare(
-    `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
-  ).get();
-  const uscite = db.prepare(
-    `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
-  ).get();
-  const vincolati = db.prepare(
-    `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
-  ).get();
-  const reale = (entrate.total || 0) - (uscite.total || 0);
-  return {
-    fondo_cassa_reale: reale,
-    fondi_vincolati: vincolati.total || 0,
-    disponibile_effettivo: reale - (vincolati.total || 0)
-  };
+  try {
+    const entrate = db.prepare(
+      `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
+    ).get();
+    const uscite = db.prepare(
+      `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
+    ).get();
+    const vincolati = db.prepare(
+      `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
+    ).get();
+    return {
+      fondo_cassa_reale: (entrate.total || 0) - (uscite.total || 0),
+      fondi_vincolati: vincolati.total || 0,
+      disponibile_effettivo: (entrate.total || 0) - (uscite.total || 0) - (vincolati.total || 0)
+    };
+  } catch (e) {
+    logSystem("ERROR", "getSituazioneGlobale", e);
+    return {
+      fondo_cassa_reale: 0,
+      fondi_vincolati: 0,
+      disponibile_effettivo: 0
+    };
+  }
 }
 function addMovimentoFondo(importo, descrizione) {
+  logSystem("ACTION", `Movimento Fondo: ${importo}€ - ${descrizione}`);
   return db.prepare("INSERT INTO fondo_cassa (importo, descrizione) VALUES (?, ?)").run(importo, descrizione);
 }
-function getMovimentiFondo(limit = 20) {
+function getMovimentiFondo(limit = 50) {
   return db.prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT ?").all(limit);
 }
 function getMembri() {
   return db.prepare("SELECT * FROM membri ORDER BY cognome ASC").all();
 }
 function addMembro(m) {
+  logSystem("ACTION", "Aggiunta membro", m);
   const matr = m.matricola && m.matricola.trim() !== "" ? m.matricola : null;
   return db.prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)").run(m.nome, m.cognome, matr);
 }
 function deleteMembro(id) {
+  logSystem("ACTION", `Eliminazione membro ID: ${id}`);
   return db.prepare("DELETE FROM membri WHERE id = ?").run(id);
 }
 function createAcquisto(nome, prezzo) {
+  logSystem("ACTION", `Nuovo acquisto: ${nome} a ${prezzo}€`);
   const trx = db.transaction(() => {
     const info = db.prepare(
       "INSERT INTO acquisti (nome_acquisto, prezzo_unitario) VALUES (?, ?)"
@@ -162,6 +195,7 @@ function updateQuota(id, q, v) {
   ).run(q, v, id);
 }
 function setAcquistoCompletato(id) {
+  logSystem("ACTION", `Acquisto completato ID: ${id}`);
   return db.prepare("UPDATE acquisti SET completato = 1 WHERE id = ?").run(id);
 }
 let pdfLib;
@@ -183,7 +217,7 @@ async function parseBankStatement(filePath, membri) {
     console.log("-----------------------");
     const lines = text.split(/\r\n|\r|\n/).filter((l) => l.trim().length > 3);
     const matches = [];
-    const moneyRegex = /([0-9]{1,3}(?:[.,][0-9]{3})*[.,][0-9]{2})/;
+    const moneyRegex = /[\d.,]+[.,]\d{2}/;
     for (let i = 0; i < lines.length; i++) {
       const currentLine = normalize(lines[i]);
       const moneyMatch = currentLine.match(moneyRegex);
@@ -234,7 +268,7 @@ async function parseBankStatement(filePath, membri) {
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
 let win = null;
 let splash = null;
-const iconPath = process.env.VITE_DEV_SERVER_URL ? path.join(process.cwd(), "public", "icon.png") : path.join(__dirname, "../../dist/icon.png");
+const iconPath = process.env.VITE_DEV_SERVER_URL ? path.join(process.cwd(), "public/icon.png") : path.join(__dirname, "../../dist/icon.png");
 function getPreloadPath() {
   const p = path.join(
     __dirname,
@@ -268,9 +302,11 @@ function createSplashWindow() {
   splash.loadFile(splashFile);
 }
 function setupApp() {
+  logSystem("INFO", "--- APPLICAZIONE AVVIATA ---");
   updateSplash(30, "Verifica Backup & Database...");
   setTimeout(() => {
     if (!initDB()) {
+      logSystem("ERROR", "InitDB fallito");
       electron.dialog.showErrorBox("Errore", "Impossibile inizializzare il database.");
       electron.app.quit();
     } else {
@@ -278,7 +314,12 @@ function setupApp() {
       createMainWindow();
     }
   }, 1e3);
+  electron.ipcMain.handle(
+    "log-ui-action",
+    (e, msg) => logSystem("ACTION", `[UI] ${msg}`)
+  );
   electron.ipcMain.handle("quit-app", () => {
+    logSystem("INFO", "Richiesta chiusura app");
     if (win) win.hide();
     if (!splash || splash.isDestroyed()) createSplashWindow();
     else splash.show();
@@ -290,10 +331,15 @@ function setupApp() {
     }, 1e3);
   });
   electron.ipcMain.handle("get-backups", () => getBackupsList());
+  electron.ipcMain.handle("open-backup-folder", () => openBackupFolder());
   electron.ipcMain.handle("restore-backup", (e, filename) => {
+    logSystem("ACTION", `Tentativo ripristino backup: ${filename}`);
     if (restoreBackup(filename)) {
+      logSystem("INFO", "Ripristino riuscito, riavvio app...");
       electron.app.relaunch();
       electron.app.exit(0);
+    } else {
+      logSystem("ERROR", "Ripristino fallito");
     }
     return false;
   });
@@ -319,10 +365,12 @@ function setupApp() {
     return res.canceled ? null : res.filePaths[0];
   });
   electron.ipcMain.handle("analyze-pdf", async (e, p) => {
+    logSystem("INFO", `Analisi PDF richiesta: ${p}`);
     try {
       return await parseBankStatement(p, getMembri());
-    } catch {
-      return [];
+    } catch (err) {
+      logSystem("ERROR", "Errore parsing PDF", err.message);
+      throw err;
     }
   });
 }
