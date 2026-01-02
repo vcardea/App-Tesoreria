@@ -93,16 +93,36 @@ export function getBackupsList() {
 
 export function restoreBackup(filename: string) {
   try {
-    if (db && db.open) db.close();
+    // 1. CHIUDIAMO LA CONNESSIONE ESPLICITAMENTE
+    if (db && db.open) {
+      db.close();
+      console.log("🔒 DB chiuso per restore.");
+    }
+
     const source = path.join(backupDir, filename);
+    if (!fs.existsSync(source)) {
+      logSystem("ERROR", "File backup non trovato su disco");
+      return false;
+    }
 
-    if (!fs.existsSync(source)) throw new Error("File backup non trovato");
+    // 2. PULIZIA TOTALE (Sia .db che i file temporanei WAL/SHM)
+    // Se non cancelli WAL e SHM, sqlite al riavvio cercherà di "fondere" i vecchi log col nuovo db -> CORRUZIONE/BLOCCO
+    try {
+      if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+      if (fs.existsSync(dbPath + "-wal")) fs.unlinkSync(dbPath + "-wal");
+      if (fs.existsSync(dbPath + "-shm")) fs.unlinkSync(dbPath + "-shm");
+    } catch (err: any) {
+      logSystem("ERROR", `Impossibile pulire vecchi file DB: ${err.message}`);
+      // Proseguiamo comunque, potrebbe funzionare lo stesso sovrascrivendo
+    }
 
+    // 3. COPIA
     fs.copyFileSync(source, dbPath);
-    logSystem("ACTION", `Database ripristinato da: ${filename}`);
+
+    logSystem("ACTION", `Database ripristinato correttamente da: ${filename}`);
     return true;
-  } catch (e) {
-    logSystem("ERROR", "Fallimento ripristino backup", e);
+  } catch (e: any) {
+    logSystem("ERROR", "Fallimento critico restore backup", e.message);
     return false;
   }
 }

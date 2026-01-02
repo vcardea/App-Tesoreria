@@ -1,1 +1,59 @@
-/node_modules/
+# --- Node & Dipendenze ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Build & Distrubuzione (Vite + Electron) ---
+dist/
+dist-electron/
+release/
+build/
+
+# --- Database & Dati Utente (FONDAMENTALE) ---
+# Ignora il database locale (non vuoi committare i dati di test o reali)
+*.db
+*.db-wal
+*.db-shm
+
+# Ignora la cartella dei backup automatici
+backups/
+
+# Ignora i file di log generati dall'app
+system.log
+*.log
+
+# --- Python Engine ---
+# Ignora l'ambiente virtuale (pesantissimo e inutile da committare)
+python_engine/venv/
+python_engine/.venv/
+
+# Ignora cache e file compilati Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Ambiente Windows/Mac ---
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- IDE & Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- File Temporanei ---
+tmp/
+temp/
+
+# --- Altri File ---
+xlsx/
+*.xlsx
+*.xls
+*.xls
+*.csv

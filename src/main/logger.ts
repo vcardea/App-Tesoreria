@@ -1,15 +1,19 @@
 import fs from "fs";
 import path from "path";
-import { app } from "electron";
+import { app, shell } from "electron";
 
 const logPath = path.join(app.getPath("userData"), "system.log");
 
-// Assicura che il file esista
+// Assicura che il file esista all'avvio
 if (!fs.existsSync(logPath)) {
-  fs.writeFileSync(
-    logPath,
-    `--- LOG INIZIATO IL ${new Date().toLocaleString()} ---\n`
-  );
+  try {
+    fs.writeFileSync(
+      logPath,
+      `--- LOG INIZIATO IL ${new Date().toLocaleString()} ---\n`
+    );
+  } catch (e) {
+    console.error("Impossibile creare file di log:", e);
+  }
 }
 
 export function logSystem(
@@ -30,14 +34,20 @@ export function logSystem(
 
   logLine += "\n";
 
-  // Scrittura sincrona per essere sicuri di non perdere nulla in caso di crash
+  // Scrittura sincrona (blocca pochissimo, ma è sicura)
   try {
     fs.appendFileSync(logPath, logLine);
-    // Stampa anche in console per il dev
+    // Stampa anche nella console di sviluppo (terminale)
     console.log(logLine.trim());
   } catch (e) {
     console.error("Fallimento scrittura log:", e);
   }
+}
+
+// QUESTA È LA FUNZIONE CHE MANCAVA O NON ERA ESPORTATA
+export function openSystemLog() {
+  logSystem("ACTION", "Apertura file di log richiesta dall'utente");
+  shell.openPath(logPath);
 }
 
 export function getLogPath() {
