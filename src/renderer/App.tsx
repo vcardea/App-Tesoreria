@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
+import { History as HistoryIcon } from 'lucide-react';
 import {
   Users,
   LayoutDashboard,
@@ -17,6 +18,9 @@ import {
   Edit2,
   FileSpreadsheet,
   Download,
+  Search,
+  ListChecks,
+  Filter,
 } from "lucide-react";
 
 interface Quota {
@@ -79,9 +83,9 @@ const CustomModal = ({
   };
   const s = styles[variant as keyof typeof styles] || styles.neutral;
   return (
-    <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+    <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div
-        className={`w-full max-w-lg bg-gray-950 rounded-2xl shadow-2xl border ${s.border} flex flex-col overflow-hidden`}
+        className={`w-full max-w-lg bg-gray-950 rounded-2xl shadow-2xl border ${s.border} flex flex-col overflow-hidden scale-100`}
       >
         <div
           className={`px-6 py-4 flex justify-between items-center border-b ${s.border} ${s.bgHead}`}
@@ -97,7 +101,9 @@ const CustomModal = ({
             <X size={20} />
           </button>
         </div>
-        <div className="p-6 text-gray-300">{children}</div>
+        <div className="p-6 text-gray-300 max-h-[80vh] overflow-y-auto">
+          {children}
+        </div>
         {actions && (
           <div
             className={`px-6 py-4 bg-gray-900/50 border-t ${s.border} flex justify-end space-x-3`}
@@ -117,13 +123,14 @@ function App() {
     fondi_vincolati: 0,
     disponibile_effettivo: 0,
   });
-  const [membri, setMembri] = useState([]);
+  const [membri, setMembri] = useState<any[]>([]);
   const [acquisti, setAcquisti] = useState([]);
   const [selectedAcquisto, setSelectedAcquisto] = useState<any>(null);
   const [quote, setQuote] = useState<Quota[]>([]);
-  const [movimentiFondo, setMovimentiFondo] = useState([]);
+  const [movimentiFondo, setMovimentiFondo] = useState<any[]>([]);
   const [backups, setBackups] = useState([]);
 
+  // State UI
   const [newMembro, setNewMembro] = useState({
     nome: "",
     cognome: "",
@@ -142,10 +149,16 @@ function App() {
     descrizione: "",
   });
 
+  // Search States
+  const [searchMembri, setSearchMembri] = useState("");
+  const [searchFondo, setSearchFondo] = useState("");
+  const [searchQuota, setSearchQuota] = useState("");
+  const [searchExcel, setSearchExcel] = useState("");
+
+  // Excel Logic
   const [excelMatches, setExcelMatches] = useState<any[]>([]);
   const [selectedMatches, setSelectedMatches] = useState<number[]>([]);
 
-  // MODALE STATE
   const [modal, setModal] = useState<{
     view:
       | "none"
@@ -176,11 +189,43 @@ function App() {
     loadData();
   }, []);
 
+  // --- FILTRI ---
+  const filteredMembri = useMemo(() => {
+    return membri.filter((m) =>
+      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
+        .toUpperCase()
+        .includes(searchMembri.toUpperCase())
+    );
+  }, [membri, searchMembri]);
+
+  const filteredFondo = useMemo(() => {
+    return movimentiFondo.filter((m) =>
+      m.descrizione.toUpperCase().includes(searchFondo.toUpperCase())
+    );
+  }, [movimentiFondo, searchFondo]);
+
+  const filteredQuote = useMemo(() => {
+    return quote.filter((q) =>
+      (q.nome + " " + q.cognome + " " + q.matricola)
+        .toUpperCase()
+        .includes(searchQuota.toUpperCase())
+    );
+  }, [quote, searchQuota]);
+
+  const filteredExcelMatches = useMemo(() => {
+    return excelMatches
+      .map((m, i) => ({ ...m, originalIndex: i }))
+      .filter(
+        (m) =>
+          m.nome_trovato.toUpperCase().includes(searchExcel.toUpperCase()) ||
+          m.linea_originale.toUpperCase().includes(searchExcel.toUpperCase())
+      );
+  }, [excelMatches, searchExcel]);
+
   // --- FUNZIONI MEMBRI ---
   const handleSaveMembro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMembro.nome || !newMembro.cognome) return;
-
     if (editingMembroId) {
       await window.api.updateMembro(editingMembroId, newMembro);
       setEditingMembroId(null);
@@ -203,6 +248,17 @@ function App() {
   const cancelEditMembro = () => {
     setNewMembro({ nome: "", cognome: "", matricola: "" });
     setEditingMembroId(null);
+  };
+
+  const handleDeleteMembroRequest = (id: number) => {
+    setModal({ view: "confirm_delete_membro", data: { id } });
+  };
+
+  const confirmDeleteMembro = async () => {
+    if (!modal.data?.id) return;
+    await window.api.deleteMembro(modal.data.id);
+    setModal({ view: "none" });
+    loadData();
   };
 
   const handleImportMembriExcel = async () => {
@@ -287,7 +343,9 @@ function App() {
         return;
       }
       setExcelMatches(matches);
+      // Di default seleziona tutto
       setSelectedMatches(matches.map((_: any, i: number) => i));
+      setSearchExcel(""); // Reset ricerca
       setModal({ view: "excel_bank" });
     } catch (e: any) {
       const msg =
@@ -332,7 +390,9 @@ function App() {
   // --- RENDER ---
   return (
     <div className="flex h-screen bg-gray-950 text-white font-sans overflow-hidden relative">
-      {/* MODALI NUOVI */}
+      {/* --- MODALI --- */}
+
+      {/* 1. Elimina Acquisto */}
       <CustomModal
         isOpen={modal.view === "confirm_delete_acquisto"}
         title="Elimina Acquisto"
@@ -361,6 +421,39 @@ function App() {
         </p>
       </CustomModal>
 
+      {/* 2. Elimina Membro (NUOVO) */}
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_membro"}
+        title="Elimina Membro"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={confirmDeleteMembro}
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
+            >
+              Conferma Eliminazione
+            </button>
+          </>
+        }
+      >
+        <p className="text-lg">
+          Stai eliminando un membro. Questa azione eliminerà anche{" "}
+          <b>tutto lo storico</b> dei suoi pagamenti.
+        </p>
+        <p className="text-sm opacity-70 mt-2">
+          Questa azione è irreversibile.
+        </p>
+      </CustomModal>
+
+      {/* Alert Generico */}
       <CustomModal
         isOpen={modal.view === "alert"}
         title={modal.data?.title}
@@ -378,6 +471,7 @@ function App() {
         <p className="whitespace-pre-wrap text-lg">{modal.data?.msg}</p>
       </CustomModal>
 
+      {/* Edit Acquisto */}
       <CustomModal
         isOpen={modal.view === "edit_acquisto"}
         title="Modifica Acquisto"
@@ -433,9 +527,11 @@ function App() {
         )}
       </CustomModal>
 
+      {/* Excel Bank Preview (MIGLIORATO) */}
       {modal.view === "excel_bank" && (
         <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8">
-          <div className="bg-gray-900 w-full max-w-5xl h-[85vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden">
+          <div className="bg-gray-900 w-full max-w-6xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden">
+            {/* Header Modale */}
             <div className="p-6 border-b border-gray-700 flex justify-between bg-gray-800">
               <h3 className="text-xl font-bold flex items-center">
                 <FileSpreadsheet className="mr-2 text-green-500" /> Importazione
@@ -445,61 +541,112 @@ function App() {
                 <X size={24} />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto p-6">
-              <table className="w-full text-left">
-                <thead className="text-gray-500 uppercase text-xs sticky top-0 bg-gray-900">
+
+            {/* Toolbar di Selezione e Ricerca */}
+            <div className="p-4 bg-gray-800/50 border-b border-gray-700 flex flex-wrap gap-4 items-center justify-between">
+              <div className="flex gap-2">
+                <button
+                  onClick={() =>
+                    setSelectedMatches(excelMatches.map((_, i) => i))
+                  }
+                  className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded flex items-center"
+                >
+                  <ListChecks size={14} className="mr-1" /> TUTTI
+                </button>
+                <button
+                  onClick={() => setSelectedMatches([])}
+                  className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded flex items-center"
+                >
+                  <X size={14} className="mr-1" /> NESSUNO
+                </button>
+              </div>
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  size={16}
+                />
+                <input
+                  type="text"
+                  placeholder="Cerca nella lista..."
+                  className="bg-black border border-gray-600 rounded-full pl-10 pr-4 py-2 text-sm w-64 focus:border-green-500 outline-none"
+                  value={searchExcel}
+                  onChange={(e) => setSearchExcel(e.target.value)}
+                />
+              </div>
+              <div className="text-sm text-gray-400">
+                Selezionati:{" "}
+                <b className="text-white">{selectedMatches.length}</b> /{" "}
+                {excelMatches.length}
+              </div>
+            </div>
+
+            {/* Tabella Dati */}
+            <div className="flex-1 overflow-y-auto p-0">
+              <table className="w-full text-left border-collapse">
+                <thead className="text-gray-500 uppercase text-xs sticky top-0 bg-gray-900 z-10 shadow-sm">
                   <tr>
-                    <th className="p-3 w-10"></th>
-                    <th className="p-3">Membro</th>
-                    <th className="p-3">Importo</th>
-                    <th className="p-3">Dettaglio</th>
+                    <th className="p-4 w-10 text-center">✓</th>
+                    <th className="p-4">Membro</th>
+                    <th className="p-4">Importo</th>
+                    <th className="p-4">Dettaglio Riga</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {excelMatches.map((m, i) => (
-                    <tr
-                      key={i}
-                      className={`border-b border-gray-800 cursor-pointer ${
-                        selectedMatches.includes(i)
-                          ? "bg-green-900/20"
-                          : "hover:bg-gray-800/50"
-                      }`}
-                      onClick={() =>
-                        setSelectedMatches((prev) =>
-                          prev.includes(i)
-                            ? prev.filter((x) => x !== i)
-                            : [...prev, i]
-                        )
-                      }
-                    >
-                      <td className="p-3">
-                        <input
-                          type="checkbox"
-                          checked={selectedMatches.includes(i)}
-                          readOnly
-                        />
-                      </td>
-                      <td className="p-3 font-bold">{m.nome_trovato}</td>
-                      <td className="p-3 font-mono text-green-400">
-                        {formatCurrency(m.importo_trovato)}
-                      </td>
-                      <td className="p-3 text-xs text-gray-500 truncate max-w-md">
-                        {m.linea_originale}
+                  {filteredExcelMatches.length > 0 ? (
+                    filteredExcelMatches.map((m) => (
+                      <tr
+                        key={m.originalIndex}
+                        className={`border-b border-gray-800 cursor-pointer transition-colors ${
+                          selectedMatches.includes(m.originalIndex)
+                            ? "bg-green-900/20 hover:bg-green-900/30"
+                            : "hover:bg-gray-800/50"
+                        }`}
+                        onClick={() =>
+                          setSelectedMatches((prev) =>
+                            prev.includes(m.originalIndex)
+                              ? prev.filter((x) => x !== m.originalIndex)
+                              : [...prev, m.originalIndex]
+                          )
+                        }
+                      >
+                        <td className="p-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedMatches.includes(m.originalIndex)}
+                            readOnly
+                            className="accent-green-500 w-4 h-4 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-4 font-bold text-white">
+                          {m.nome_trovato}
+                        </td>
+                        <td className="p-4 font-mono text-green-400 font-bold">
+                          {formatCurrency(m.importo_trovato)}
+                        </td>
+                        <td className="p-4 text-xs text-gray-500 truncate max-w-lg font-mono">
+                          {m.linea_originale}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={4} className="p-8 text-center text-gray-500">
+                        Nessuna corrispondenza trovata con "{searchExcel}"
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
-            <div className="p-6 border-t border-gray-700 bg-gray-800 flex justify-between">
-              <span className="text-gray-400">
-                Selezionati: <b>{selectedMatches.length}</b>
-              </span>
+
+            {/* Footer Azioni */}
+            <div className="p-6 border-t border-gray-700 bg-gray-800 flex justify-end">
               <button
                 onClick={confirmImportBank}
-                className="bg-green-600 hover:bg-green-500 px-8 py-3 rounded-lg font-bold"
+                className="bg-green-600 hover:bg-green-500 px-8 py-3 rounded-lg font-bold shadow-lg text-white flex items-center"
               >
-                IMPORTA
+                <Download className="mr-2" size={20} /> IMPORTA SELEZIONATI (
+                {selectedMatches.length})
               </button>
             </div>
           </div>
@@ -690,6 +837,7 @@ function App() {
 
       {/* MAIN */}
       <main className="flex-1 overflow-y-auto p-8 bg-gray-950">
+        {/* DASHBOARD */}
         {activeTab === "dashboard" && (
           <div>
             <div className="flex justify-between items-center mb-8">
@@ -727,9 +875,57 @@ function App() {
                 </p>
               </div>
             </div>
+
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold flex items-center">
+                <HistoryIcon className="mr-2" /> Movimenti Fondo
+              </h3>
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-2 text-gray-500"
+                  size={16}
+                />
+                <input
+                  placeholder="Cerca movimento..."
+                  className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
+                  value={searchFondo}
+                  onChange={(e) => setSearchFondo(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
+                  <tr>
+                    <th className="p-4">Data</th>
+                    <th className="p-4">Descrizione</th>
+                    <th className="p-4 text-right">Importo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredFondo.map((m: any) => (
+                    <tr key={m.id} className="border-b border-gray-800">
+                      <td className="p-4 text-gray-400">
+                        {m.data.split(" ")[0]}
+                      </td>
+                      <td className="p-4">{m.descrizione}</td>
+                      <td
+                        className={`p-4 text-right font-bold ${
+                          m.importo >= 0 ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {m.importo > 0 ? "+" : ""}
+                        {formatCurrency(m.importo)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
 
+        {/* MEMBRI */}
         {activeTab === "membri" && (
           <div>
             <div className="flex justify-between items-center mb-8">
@@ -818,6 +1014,26 @@ function App() {
                 </button>
               </div>
             </form>
+
+            <div className="flex justify-between items-center mb-4 bg-gray-900 p-4 rounded-xl border border-gray-800">
+              <div className="flex items-center text-gray-400">
+                <Users size={18} className="mr-2" /> Totale Membri:{" "}
+                <b className="text-white ml-1">{membri.length}</b>
+              </div>
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-2 text-gray-500"
+                  size={16}
+                />
+                <input
+                  placeholder="Cerca membro..."
+                  className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
+                  value={searchMembri}
+                  onChange={(e) => setSearchMembri(e.target.value)}
+                />
+              </div>
+            </div>
+
             <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
@@ -828,7 +1044,7 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {membri.map((m: any) => (
+                  {filteredMembri.map((m: any) => (
                     <tr
                       key={m.id}
                       className="border-b border-gray-800 hover:bg-gray-800/50"
@@ -847,10 +1063,7 @@ function App() {
                           <Edit2 size={18} />
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm("Eliminare membro?"))
-                              window.api.deleteMembro(m.id).then(loadData);
-                          }}
+                          onClick={() => handleDeleteMembroRequest(m.id)}
                           className="text-gray-400 hover:text-red-400 p-2"
                         >
                           <Trash2 size={18} />
@@ -864,6 +1077,7 @@ function App() {
           </div>
         )}
 
+        {/* ACQUISTI */}
         {activeTab === "acquisti" && (
           <div className="grid grid-cols-12 gap-8 h-full">
             <div className="col-span-4 flex flex-col h-full overflow-hidden">
@@ -913,6 +1127,7 @@ function App() {
                     onClick={async () => {
                       setSelectedAcquisto(a);
                       setQuote(await window.api.getQuote(a.id));
+                      setSearchQuota("");
                     }}
                     className={`p-4 rounded border cursor-pointer flex justify-between items-center transition ${
                       selectedAcquisto?.id === a.id
@@ -938,11 +1153,46 @@ function App() {
             <div className="col-span-8 flex flex-col h-full overflow-hidden">
               {selectedAcquisto ? (
                 <div className="bg-gray-900 rounded-2xl border border-gray-800 h-full flex flex-col">
-                  <div className="p-6 border-b border-gray-800 flex justify-between items-center bg-gray-800/50 rounded-t-2xl">
-                    <div>
-                      <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                        {selectedAcquisto.nome_acquisto}
-                        {!selectedAcquisto.completato && (
+                  <div className="p-6 border-b border-gray-800 flex flex-col gap-4 bg-gray-800/50 rounded-t-2xl">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h2 className="text-3xl font-bold text-white mb-1">
+                          {selectedAcquisto.nome_acquisto}
+                        </h2>
+                        <div className="text-sm text-gray-400 flex gap-4 items-center">
+                          <span>
+                            Prezzo:{" "}
+                            <b className="text-white text-lg">
+                              {formatCurrency(selectedAcquisto.prezzo_unitario)}
+                            </b>
+                          </span>
+                          <span>
+                            Acconto:{" "}
+                            <b className="text-blue-300 text-lg">
+                              {formatCurrency(
+                                selectedAcquisto.acconto_fornitore || 0
+                              )}
+                            </b>
+                          </span>
+                          <span>
+                            Stato:{" "}
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-bold ${
+                                selectedAcquisto.completato
+                                  ? "bg-green-900 text-green-400"
+                                  : "bg-yellow-900 text-yellow-400"
+                              }`}
+                            >
+                              {selectedAcquisto.completato
+                                ? "CONCLUSO"
+                                : "APERTO"}
+                            </span>
+                          </span>
+                        </div>
+                      </div>
+
+                      {!selectedAcquisto.completato && (
+                        <div className="flex gap-2">
                           <button
                             onClick={() => {
                               setEditingAcq({
@@ -957,88 +1207,72 @@ function App() {
                               });
                               setModal({ view: "edit_acquisto" });
                             }}
-                            className="text-gray-500 hover:text-white"
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center transition shadow-lg border border-blue-500"
                           >
-                            <Edit2 size={16} />
+                            <Edit2 size={14} className="mr-1" /> MODIFICA
                           </button>
-                        )}
-                        {!selectedAcquisto.completato && (
                           <button
                             onClick={() =>
                               handleDeleteAcquistoRequest(selectedAcquisto.id)
                             }
-                            className="text-gray-500 hover:text-red-500"
+                            className="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center transition shadow-lg border border-red-500"
                           >
-                            <Trash2 size={16} />
+                            <Trash2 size={14} className="mr-1" /> ELIMINA
                           </button>
-                        )}
-                      </h2>
-                      <div className="text-sm text-gray-400 mt-1 flex gap-4">
-                        <span>
-                          Prezzo:{" "}
-                          <b className="text-white">
-                            {formatCurrency(selectedAcquisto.prezzo_unitario)}
-                          </b>
-                        </span>
-                        <span>
-                          Acconto:{" "}
-                          <b className="text-blue-300">
-                            {formatCurrency(
-                              selectedAcquisto.acconto_fornitore || 0
-                            )}
-                          </b>
-                        </span>
-                        <span>
-                          Stato:{" "}
-                          <span
-                            className={
-                              selectedAcquisto.completato
-                                ? "text-green-400 font-bold"
-                                : "text-yellow-400 font-bold"
-                            }
-                          >
-                            {selectedAcquisto.completato
-                              ? "CONCLUSO"
-                              : "APERTO"}
-                          </span>
-                        </span>
-                      </div>
+                        </div>
+                      )}
                     </div>
+
                     {!selectedAcquisto.completato && (
-                      <div className="flex space-x-2">
-                        <button
-                          onClick={handleBankExcelUpload}
-                          className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                        >
-                          <FileSpreadsheet className="mr-2" size={18} /> Importa
-                          Banca
-                        </button>
-                        <button
-                          onClick={() => {
-                            let d = 0,
-                              v = 0;
-                            quote.forEach((q: any) => {
-                              d +=
-                                q.quantita * selectedAcquisto.prezzo_unitario;
-                              v += q.importo_versato;
-                            });
-                            setModal({
-                              view: "confirm_purchase",
-                              data: {
-                                diff: d - v,
-                                dovuto: d,
-                                versato: v,
-                                id: selectedAcquisto.id,
-                              },
-                            });
-                          }}
-                          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                        >
-                          <CheckCircle className="mr-2" size={18} /> Concludi
-                        </button>
+                      <div className="flex justify-between items-end border-t border-gray-700 pt-4">
+                        <div className="relative">
+                          <Search
+                            className="absolute left-3 top-2 text-gray-500"
+                            size={16}
+                          />
+                          <input
+                            placeholder="Cerca tra i paganti..."
+                            className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
+                            value={searchQuota}
+                            onChange={(e) => setSearchQuota(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex space-x-2">
+                          <button
+                            onClick={handleBankExcelUpload}
+                            className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                          >
+                            <FileSpreadsheet className="mr-2" size={18} />{" "}
+                            Importa Banca
+                          </button>
+                          <button
+                            onClick={() => {
+                              let d = 0,
+                                v = 0;
+                              quote.forEach((q: any) => {
+                                d +=
+                                  q.quantita * selectedAcquisto.prezzo_unitario;
+                                v += q.importo_versato;
+                              });
+                              setModal({
+                                view: "confirm_purchase",
+                                data: {
+                                  diff: d - v,
+                                  dovuto: d,
+                                  versato: v,
+                                  id: selectedAcquisto.id,
+                                },
+                              });
+                            }}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                          >
+                            <CheckCircle className="mr-2" size={18} /> Concludi
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
+
                   <div className="flex-1 overflow-y-auto">
                     <table className="w-full text-left text-sm">
                       <thead className="bg-gray-950 text-gray-500 text-xs uppercase sticky top-0">
@@ -1050,7 +1284,7 @@ function App() {
                         </tr>
                       </thead>
                       <tbody>
-                        {quote.map((q: any) => {
+                        {filteredQuote.map((q: any) => {
                           const dov =
                             q.quantita * selectedAcquisto.prezzo_unitario;
                           const err =
@@ -1126,6 +1360,7 @@ function App() {
           </div>
         )}
 
+        {/* SETTINGS */}
         {activeTab === "settings" && (
           <div>
             <h2 className="text-3xl font-bold mb-8 text-white">

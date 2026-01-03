@@ -1,5 +1,5 @@
 {
-  "name": "tespriere-app",
+  "name": "tesoriere-app",
   "private": true,
   "version": "1.0.0",
   "main": "dist-electron/main/index.js",
@@ -7,6 +7,39 @@
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
     "preview": "vite preview"
+  },
+  "build": {
+    "appId": "app-tesoriere",
+    "productName": "Tesoriere App",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   },
   "dependencies": {
     "better-sqlite3": "^11.1.0",
