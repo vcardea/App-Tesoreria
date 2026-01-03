@@ -130,11 +130,11 @@ export function restoreBackup(filename: string) {
 // --- DB INIT ---
 export function initDB() {
   try {
-    performBackup(); // Esegue backup PRIMA di aprire
+    if (fs.existsSync(dbPath)) performBackup();
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
 
+    // Tabelle base
     db.exec(
       `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL, matricola TEXT);`
     );
@@ -148,93 +148,112 @@ export function initDB() {
       `CREATE TABLE IF NOT EXISTS fondo_cassa (id INTEGER PRIMARY KEY AUTOINCREMENT, importo REAL NOT NULL, descrizione TEXT, data DATETIME DEFAULT CURRENT_TIMESTAMP);`
     );
 
-    logSystem("DB", "Database inizializzato correttamente");
+    // MIGRAZIONE: Aggiungi colonna acconto_fornitore se non esiste
+    try {
+      const tableInfo = db.pragma("table_info(acquisti)") as any[];
+      const hasAcconto = tableInfo.some((c) => c.name === "acconto_fornitore");
+      if (!hasAcconto) {
+        db.exec(
+          "ALTER TABLE acquisti ADD COLUMN acconto_fornitore REAL DEFAULT 0"
+        );
+        logSystem("DB", "Colonna acconto_fornitore aggiunta");
+      }
+    } catch (e) {
+      logSystem("ERROR", "Errore migrazione DB", e);
+    }
+
     return true;
   } catch (error) {
-    logSystem("ERROR", "Errore critico inizializzazione DB", error);
     return false;
   }
 }
 
 export function closeDB() {
-  if (db && db.open) {
-    db.close();
-    logSystem("DB", "Database chiuso");
-  }
+  if (db) db.close();
 }
 
-// --- CONTABILITÀ ---
+// --- QUERY ---
 export function getSituazioneGlobale() {
-  try {
-    const entrate = db
-      .prepare(
-        `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
-      )
-      .get() as any;
-    const uscite = db
-      .prepare(
-        `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
-      )
-      .get() as any;
-    const vincolati = db
-      .prepare(
-        `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
-      )
-      .get() as any;
-    return {
-      fondo_cassa_reale: (entrate.total || 0) - (uscite.total || 0),
-      fondi_vincolati: vincolati.total || 0,
-      disponibile_effettivo:
-        (entrate.total || 0) - (uscite.total || 0) - (vincolati.total || 0),
-    };
-  } catch (e) {
-    logSystem("ERROR", "getSituazioneGlobale", e);
-    return {
-      fondo_cassa_reale: 0,
-      fondi_vincolati: 0,
-      disponibile_effettivo: 0,
-    };
-  }
+  const entrate = db
+    .prepare(
+      `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
+    )
+    .get() as any;
+  // Le uscite sono: (prezzo * qta) degli acquisti completati OPPURE acconti versati per quelli aperti
+  // Ma per semplicità contabile: i soldi escono quando paghi il fornitore.
+  // Calcolo semplificato: Uscite = Acquisti Completati (Totale) + Acconti su Acquisti Aperti
+  const usciteCompletati = db
+    .prepare(
+      `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
+    )
+    .get() as any;
+  const accontiAperti = db
+    .prepare(
+      `SELECT SUM(acconto_fornitore) as total FROM acquisti WHERE completato = 0`
+    )
+    .get() as any;
+
+  const totaleUscite =
+    (usciteCompletati.total || 0) + (accontiAperti.total || 0);
+
+  const vincolati = db
+    .prepare(
+      `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
+    )
+    .get() as any;
+  const reale = (entrate.total || 0) - totaleUscite;
+
+  return {
+    fondo_cassa_reale: reale,
+    fondi_vincolati: vincolati.total || 0,
+    disponibile_effettivo: reale - (vincolati.total || 0),
+  };
 }
 
-export function addMovimentoFondo(importo: number, descrizione: string) {
-  logSystem("ACTION", `Movimento Fondo: ${importo}€ - ${descrizione}`);
+export function addMovimentoFondo(i: number, d: string) {
   return db
     .prepare("INSERT INTO fondo_cassa (importo, descrizione) VALUES (?, ?)")
-    .run(importo, descrizione);
+    .run(i, d);
 }
-export function getMovimentiFondo(limit = 50) {
+export function getMovimentiFondo() {
   return db
-    .prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT ?")
-    .all(limit);
+    .prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT 50")
+    .all();
 }
 
-// --- MEMBRI ---
+// Membri
 export function getMembri() {
   return db.prepare("SELECT * FROM membri ORDER BY cognome ASC").all();
 }
 export function addMembro(m: any) {
-  logSystem("ACTION", "Aggiunta membro", m);
-  const matr = m.matricola && m.matricola.trim() !== "" ? m.matricola : null;
+  // Evita duplicati basici (Nome + Cognome uguali)
+  const exists = db
+    .prepare("SELECT id FROM membri WHERE nome = ? AND cognome = ?")
+    .get(m.nome, m.cognome);
+  if (exists) return { changes: 0 };
   return db
     .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
-    .run(m.nome, m.cognome, matr);
+    .run(m.nome, m.cognome, m.matricola || null);
+}
+export function updateMembro(id: number, m: any) {
+  return db
+    .prepare(
+      "UPDATE membri SET nome = ?, cognome = ?, matricola = ? WHERE id = ?"
+    )
+    .run(m.nome, m.cognome, m.matricola || null, id);
 }
 export function deleteMembro(id: number) {
-  logSystem("ACTION", `Eliminazione membro ID: ${id}`);
   return db.prepare("DELETE FROM membri WHERE id = ?").run(id);
 }
 
-// --- ACQUISTI ---
-export function createAcquisto(nome: string, prezzo: number) {
-  logSystem("ACTION", `Nuovo acquisto: ${nome} a ${prezzo}€`);
+// Acquisti
+export function createAcquisto(n: string, p: number, acconto: number = 0) {
   const trx = db.transaction(() => {
-    const info = db
+    const id = db
       .prepare(
-        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario) VALUES (?, ?)"
+        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore) VALUES (?, ?, ?)"
       )
-      .run(nome, prezzo);
-    const id = info.lastInsertRowid;
+      .run(n, p, acconto).lastInsertRowid;
     db.prepare(
       `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri`
     ).run(id);
@@ -242,10 +261,24 @@ export function createAcquisto(nome: string, prezzo: number) {
   });
   return trx();
 }
-export function getAcquisti(soloAttivi = false) {
-  const f = soloAttivi ? "WHERE completato = 0" : "";
+export function updateAcquisto(
+  id: number,
+  n: string,
+  p: number,
+  acconto: number
+) {
   return db
-    .prepare(`SELECT * FROM acquisti ${f} ORDER BY data_creazione DESC`)
+    .prepare(
+      "UPDATE acquisti SET nome_acquisto = ?, prezzo_unitario = ?, acconto_fornitore = ? WHERE id = ?"
+    )
+    .run(n, p, acconto, id);
+}
+export function deleteAcquisto(id: number) {
+  return db.prepare("DELETE FROM acquisti WHERE id = ?").run(id);
+}
+export function getAcquisti() {
+  return db
+    .prepare(`SELECT * FROM acquisti ORDER BY data_creazione DESC`)
     .all();
 }
 export function getQuoteAcquisto(id: number) {
@@ -256,7 +289,6 @@ export function getQuoteAcquisto(id: number) {
     .all(id);
 }
 export function updateQuota(id: number, q: number, v: number) {
-  // Non logghiamo ogni keystroke, ma potremmo loggare se necessario
   return db
     .prepare(
       "UPDATE quote_membri SET quantita = ?, importo_versato = ? WHERE id = ?"
@@ -264,6 +296,5 @@ export function updateQuota(id: number, q: number, v: number) {
     .run(q, v, id);
 }
 export function setAcquistoCompletato(id: number) {
-  logSystem("ACTION", `Acquisto completato ID: ${id}`);
   return db.prepare("UPDATE acquisti SET completato = 1 WHERE id = ?").run(id);
 }

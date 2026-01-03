@@ -1,5 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from "electron";
-import { spawn, ChildProcess, exec } from "child_process";
+import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
 import fs from "fs";
 import {
@@ -8,6 +7,7 @@ import {
   getSituazioneGlobale,
   getMembri,
   addMembro,
+  updateMembro,
   deleteMembro,
   createAcquisto,
   getAcquisti,
@@ -19,79 +19,20 @@ import {
   getBackupsList,
   restoreBackup,
   openBackupFolder,
+  updateAcquisto,
+  deleteAcquisto,
 } from "./db";
-import { parseBankStatement } from "./pdf_parser";
+import { parseBankStatement, parseMembersList } from "./excel_parser"; // Nuovo import
 import { logSystem, openSystemLog } from "./logger";
 
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
 
 let win: BrowserWindow | null = null;
 let splash: BrowserWindow | null = null;
-let pythonProcess: ChildProcess | null = null;
 
 const iconPath = process.env.VITE_DEV_SERVER_URL
   ? path.join(process.cwd(), "public/icon.png")
   : path.join(__dirname, "../../dist/icon.png");
-
-// --- MOTORE PYTHON ---
-function startPythonEngine() {
-  // Se esiste già e non è morto, non fare nulla
-  if (pythonProcess && !pythonProcess.killed) return;
-
-  const isDev = !!process.env.VITE_DEV_SERVER_URL;
-  const rootDir = process.cwd();
-
-  const pythonExe = isDev
-    ? path.join(rootDir, "python_engine", "venv", "Scripts", "python.exe")
-    : path.join(process.resourcesPath, "python_engine", "python.exe");
-
-  const mainPy = isDev
-    ? path.join(rootDir, "python_engine", "main.py")
-    : path.join(process.resourcesPath, "python_engine", "main.py");
-
-  if (!fs.existsSync(pythonExe) || !fs.existsSync(mainPy)) return;
-
-  pythonProcess = spawn(
-    pythonExe,
-    [
-      "-u",
-      "-m",
-      "uvicorn",
-      "main:app",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      "8000",
-    ],
-    {
-      cwd: path.dirname(mainPy),
-      windowsHide: true,
-    }
-  );
-
-  // Log essenziali
-  pythonProcess.stdout?.on("data", (d) => {
-    if (d.toString().trim()) logSystem("INFO", `[PY]: ${d.toString().trim()}`);
-  });
-  pythonProcess.stderr?.on("data", (d) => {
-    const m = d.toString().trim();
-    if (m && !m.includes("INFO:")) logSystem("ERROR", `[PY]: ${m}`);
-  });
-}
-
-function killPythonByType() {
-  if (pythonProcess) {
-    if (process.platform === "win32") {
-      // Tenta uccisione silenziosa, se fallisce amen
-      try {
-        exec(`taskkill /F /T /PID ${pythonProcess.pid}`);
-      } catch (e) {}
-    } else {
-      pythonProcess.kill();
-    }
-    pythonProcess = null;
-  }
-}
 
 function getPreloadPath() {
   const p = path.join(
@@ -132,8 +73,8 @@ function createSplashWindow() {
 }
 
 function setupApp() {
-  startPythonEngine();
-  updateSplash(30, "Database...");
+  logSystem("INFO", "--- STARTUP ---");
+  updateSplash(30, "Inizializzazione Database...");
 
   setTimeout(() => {
     if (!initDB()) {
@@ -141,45 +82,33 @@ function setupApp() {
       dialog.showErrorBox("Errore", "Impossibile caricare il database.");
       app.quit();
     } else {
-      updateSplash(80, "Interfaccia...");
+      updateSplash(100, "Pronto!");
       createMainWindow();
     }
-  }, 1500);
+  }, 1000);
 
+  // Handlers
   ipcMain.handle("log-ui-action", (e, msg) =>
     logSystem("ACTION", `[UI] ${msg}`)
   );
   ipcMain.handle("open-log-file", () => openSystemLog());
-
   ipcMain.handle("quit-app", () => {
     if (win) win.hide();
-    updateSplash(50, "Chiusura...");
+    updateSplash(50, "Salvataggio...");
     closeDB();
-    killPythonByType();
     setTimeout(() => app.quit(), 500);
   });
-
   ipcMain.handle("get-backups", () => getBackupsList());
   ipcMain.handle("open-backup-folder", () => openBackupFolder());
-
-  // --- RESTORE BACKUP PULITO ---
-  // Rimosso qualsiasi riferimento a forceKillPython o await complessi
   ipcMain.handle("restore-backup", (e, filename) => {
     logSystem("ACTION", `Restore richiesto: ${filename}`);
-
-    // Esegue il restore a livello DB (chiude db, cancella file, copia backup)
     const success = restoreBackup(filename);
-
     if (success) {
-      logSystem("INFO", "Restore completato. Riavvio forzato.");
-
-      // Relaunch immediato
+      logSystem("INFO", "Restore riuscito, riavvio.");
       app.relaunch();
-      // Exit immediato (0 = successo). Non aspettiamo nulla.
-      // Questo impedisce a qualsiasi altro codice di provare a cercare processi morti.
       app.exit(0);
     } else {
-      logSystem("ERROR", "Restore fallito.");
+      logSystem("ERROR", "Restore fallito (check log)");
     }
     return success;
   });
@@ -190,24 +119,48 @@ function setupApp() {
     addMovimentoFondo(d.importo, d.descrizione)
   );
   ipcMain.handle("get-movimenti-fondo", () => getMovimentiFondo());
+
   ipcMain.handle("get-membri", () => getMembri());
   ipcMain.handle("add-membro", (e, m) => addMembro(m));
+  ipcMain.handle("update-membro", (e, d) => updateMembro(d.id, d.membro));
   ipcMain.handle("delete-membro", (e, id) => deleteMembro(id));
-  ipcMain.handle("create-acquisto", (e, d) => createAcquisto(d.nome, d.prezzo));
+
+  // ACQUISTI UPDATED
+  ipcMain.handle("create-acquisto", (e, d) =>
+    createAcquisto(d.nome, d.prezzo, d.acconto)
+  );
+  ipcMain.handle("update-acquisto", (e, d) =>
+    updateAcquisto(d.id, d.nome, d.prezzo, d.acconto)
+  );
+  ipcMain.handle("delete-acquisto", (e, id) => deleteAcquisto(id));
   ipcMain.handle("get-acquisti", () => getAcquisti());
   ipcMain.handle("get-quote", (e, id) => getQuoteAcquisto(id));
   ipcMain.handle("update-quota", (e, d) => updateQuota(d.id, d.qta, d.versato));
   ipcMain.handle("completa-acquisto", (e, id) => setAcquistoCompletato(id));
+
+  // File Handlers
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
-      filters: [{ name: "PDF", extensions: ["pdf"] }],
+      filters: [{ name: "Excel/CSV", extensions: ["xlsx", "xls", "csv"] }],
     });
     return res.canceled ? null : res.filePaths[0];
   });
-  ipcMain.handle("analyze-pdf", async (e, p) =>
+
+  ipcMain.handle("analyze-excel-bank", async (e, p) =>
     parseBankStatement(p, getMembri())
   );
+
+  ipcMain.handle("import-membri-excel", async (e, p) => {
+    logSystem("INFO", `Importazione membri da: ${p}`);
+    const members = await parseMembersList(p);
+    let count = 0;
+    for (const m of members) {
+      const res = addMembro(m);
+      if (res.changes > 0) count++;
+    }
+    return count;
+  });
 }
 
 function createMainWindow() {
@@ -227,7 +180,6 @@ function createMainWindow() {
     win.loadURL(process.env.VITE_DEV_SERVER_URL + "src/renderer/index.html");
   else win.loadFile(path.join(__dirname, "../../dist/index.html"));
   win.once("ready-to-show", () => {
-    updateSplash(100, "Pronto!");
     setTimeout(() => {
       if (splash) splash.close();
       if (win) win.show();
@@ -239,10 +191,6 @@ app.whenReady().then(() => {
   createSplashWindow();
   setTimeout(setupApp, 500);
 });
-
-// Importante: Rimuovere logica async/await qui per il restore.
-// Lasciamo solo la pulizia base in uscita normale.
 app.on("window-all-closed", () => {
-  killPythonByType();
   if (process.platform !== "darwin") app.quit();
 });
