@@ -449,11 +449,13 @@ function App() {
       }));
 
     if (debtors.length === 0) {
+      // Qui usiamo variant: "success" perché è una buona notizia!
       setModal({
         view: "alert",
         data: {
-          title: "Nessun Moroso",
+          title: "Ottimo!",
           msg: "Tutti hanno saldato il dovuto per questo acquisto!",
+          variant: "success",
         },
       });
       return;
@@ -461,14 +463,26 @@ function App() {
 
     setIsLoading(true);
     try {
-      await window.api.exportDebtors({
+      const success = await window.api.exportDebtors({
         acquistoNome: selectedAcquisto.nome_acquisto,
         debtors,
       });
+
+      // SE IL SALVATAGGIO VA A BUON FINE (e l'utente non ha annullato)
+      if (success) {
+        setModal({
+          view: "alert",
+          data: {
+            title: "Esportazione Completata",
+            msg: "Il file Excel dei morosi è stato salvato con successo.",
+            variant: "success", // <--- Questo farà diventare il modale verde
+          },
+        });
+      }
     } catch (e: any) {
       setModal({
         view: "alert",
-        data: { title: "Errore Export", msg: e.message },
+        data: { title: "Errore Export", msg: e.message, variant: "danger" },
       });
     } finally {
       setIsLoading(false);
@@ -667,11 +681,12 @@ function App() {
           Tutti i dati inseriti dopo questo backup andranno persi.
         </p>
       </CustomModal>
+
       <CustomModal
         isOpen={modal.view === "alert"}
         title={modal.data?.title}
         onClose={() => setModal({ view: "none" })}
-        variant="warning"
+        variant={modal.data?.variant || "warning"} // <--- MODIFICA QUI
         actions={
           <button
             onClick={() => setModal({ view: "none" })}

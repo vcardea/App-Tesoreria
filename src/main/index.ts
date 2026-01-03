@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
-import fs from "fs";
+import fs from "fs"; // Assicurati che questo ci sia!
 import * as XLSX from "xlsx";
 import {
   initDB,
@@ -57,7 +57,7 @@ function createSplashWindow() {
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
 
-  // CARICAMENTO FILE ESTERNO (corregge il problema "sidebar")
+  // CARICAMENTO FILE ESTERNO PER EVITARE SIDEBAR
   const splashPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), "public/splash.html")
     : path.join(__dirname, "../../dist/splash.html");
@@ -72,13 +72,13 @@ function showExitSplash() {
     createSplashWindow();
   }
   if (splash && !splash.isDestroyed()) {
-    // Aspetta che il file sia caricato prima di eseguire JS
+    // Eseguiamo script solo quando il file è caricato
     splash.webContents.once("did-finish-load", () => {
       splash?.webContents.executeJavaScript(
-        `window.updateProgress(100, "Salvataggio e Chiusura...")`
+        `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
       );
     });
-    // Se è già caricato, eseguilo subito
+    // Tentativo immediato se già caricato
     splash.webContents
       .executeJavaScript(
         `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
@@ -90,10 +90,11 @@ function showExitSplash() {
 async function setupApp() {
   createSplashWindow();
 
-  // Piccolo delay per permettere il caricamento del DOM della splash
   await new Promise((r) => setTimeout(r, 500));
   splash?.webContents
-    .executeJavaScript(`window.updateProgress(20, "Connessione Database...")`)
+    .executeJavaScript(
+      `if(window.updateProgress) window.updateProgress(20, "Connessione Database...")`
+    )
     .catch(() => {});
 
   const dbOk = initDB();
@@ -101,7 +102,7 @@ async function setupApp() {
   if (!dbOk) {
     dialog.showErrorBox(
       "Errore Critico",
-      "Impossibile inizializzare il Database."
+      "Impossibile inizializzare il Database.\nControlla i permessi della cartella."
     );
     app.quit();
     return;
@@ -109,7 +110,7 @@ async function setupApp() {
 
   splash?.webContents
     .executeJavaScript(
-      `window.updateProgress(60, "Caricamento Interfaccia...")`
+      `if(window.updateProgress) window.updateProgress(60, "Caricamento Interfaccia...")`
     )
     .catch(() => {});
   createMainWindow();
@@ -135,7 +136,9 @@ function createMainWindow() {
 
   win.once("ready-to-show", () => {
     splash?.webContents
-      .executeJavaScript(`window.updateProgress(100, "Avvio completato")`)
+      .executeJavaScript(
+        `if(window.updateProgress) window.updateProgress(100, "Avvio completato")`
+      )
       .catch(() => {});
     setTimeout(() => {
       splash?.destroy();
@@ -146,7 +149,6 @@ function createMainWindow() {
 
   // --- HANDLERS ---
 
-  // DB
   ipcMain.handle("get-situazione", () => getSituazioneGlobale());
   ipcMain.handle("add-movimento-fondo", (e, data) =>
     addMovimentoFondo(data.importo, data.descrizione)
@@ -175,22 +177,47 @@ function createMainWindow() {
   );
   ipcMain.handle("completa-acquisto", (e, id) => setAcquistoCompletato(id));
 
-  // SYSTEM
   ipcMain.handle("log-ui-action", (e, msg) => logSystem("ACTION", msg));
   ipcMain.handle("open-log-file", () => openSystemLog());
   ipcMain.handle("get-backups", () => getBackupsList());
   ipcMain.handle("open-backup-folder", () => openBackupFolder());
 
+  // --- RESTORE BACKUP CON SOFT RELOAD (FIX DEFINITIVO) ---
   ipcMain.handle("restore-backup", async (e, filename) => {
     logSystem("ACTION", `Richiesto ripristino backup: ${filename}`);
-    const success = restoreBackup(filename);
-    if (success) {
-      app.relaunch();
-      app.exit(0);
-    }
-    return success;
-  });
 
+    // 1. Chiudiamo esplicitamente la connessione al DB attuale
+    closeDB();
+
+    // 2. Eseguiamo la copia del file (funzione sincrona in db.ts)
+    // Nota: restoreBackup in db.ts gestisce già la copia fisica
+    const success = restoreBackup(filename);
+
+    if (success) {
+      logSystem(
+        "INFO",
+        "Backup ripristinato su disco. Riavvio connessione DB..."
+      );
+
+      // 3. Rinizializziamo il DB (riapre la connessione al nuovo file)
+      const dbOk = initDB();
+
+      if (dbOk) {
+        // 4. Invece di app.relaunch(), ricarichiamo solo la finestra!
+        // Questo resetta l'interfaccia React e carica i nuovi dati.
+        win?.reload();
+        return true;
+      } else {
+        logSystem(
+          "ERROR",
+          "Impossibile reinizializzare il DB dopo il restore."
+        );
+        return false;
+      }
+    }
+
+    return false;
+  });
   ipcMain.handle("quit-app", () => {
     if (win) win.hide();
     showExitSplash();
@@ -200,14 +227,13 @@ function createMainWindow() {
     }, 2000);
   });
 
-  // --- FIX EXPORT EXCEL ---
+  // --- EXPORT DEBTORS FIX (METODO BUFFER) ---
   ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
-    // 1. Chiedi all'utente dove salvare
     const res = await dialog.showSaveDialog(win!, {
       title: "Esporta Morosi",
-      // Sanifichiamo il nome file rimuovendo caratteri strani
+      // Rimuoviamo caratteri non validi per Windows
       defaultPath: `Morosi_${acquistoNome
-        .replace(/[^a-zA-Z0-9à-ùÀ-Ù\s]/g, "")
+        .replace(/[^a-zA-Z0-9à-ùÀ-Ù\s_-]/g, "")
         .trim()
         .replace(/\s+/g, "_")}.xlsx`,
       filters: [{ name: "Excel File", extensions: ["xlsx"] }],
@@ -216,11 +242,8 @@ function createMainWindow() {
     if (res.canceled || !res.filePath) return false;
 
     try {
-      // 2. Crea il workbook in memoria
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(debtors);
-
-      // Imposta larghezza colonne
       ws["!cols"] = [
         { wch: 20 },
         { wch: 20 },
@@ -231,35 +254,28 @@ function createMainWindow() {
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Morosi");
 
-      // 3. Genera il buffer BINARIO (invece di far salvare a XLSX)
-      const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+      // 1. Crea il buffer in memoria (Questo non fallisce mai per permessi)
+      const buffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
 
-      // 4. Scrivi il file usando FS nativo (più controllo sugli errori)
-      fs.writeFileSync(res.filePath, excelBuffer);
+      // 2. Scrivi il file su disco usando FS nativo
+      fs.writeFileSync(res.filePath, buffer);
 
       return true;
     } catch (err: any) {
       console.error("Errore export excel:", err);
 
-      // 5. Gestione Errori Specifica
       if (err.code === "EBUSY") {
+        throw new Error(`IL FILE È GIÀ APERTO!\nChiudi Excel e riprova.`);
+      }
+      if (err.code === "EPERM" || err.code === "EACCES") {
         throw new Error(
-          `IL FILE È APERTO!\nChiudi il file Excel "${path.basename(
-            res.filePath
-          )}" e riprova.`
+          `PERMESSO NEGATO.\nWindows ha bloccato il salvataggio in questa cartella.\nProva a salvare sul Desktop.`
         );
       }
-      if (err.code === "EPERM") {
-        throw new Error(
-          "Permesso negato. Prova a salvare in un'altra cartella (es. Desktop o Documenti)."
-        );
-      }
-
-      throw new Error(`Impossibile salvare: ${err.message}`);
+      throw new Error(`Errore tecnico: ${err.message}`);
     }
   });
 
-  // FILE
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],

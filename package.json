@@ -1,5 +1,5 @@
 {
-  "name": "app-tesoreria",
+  "name": "Tesoreria",
   "private": true,
   "version": "1.0.0",
   "main": "dist-electron/main/index.js",

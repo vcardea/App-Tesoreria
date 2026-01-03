@@ -31303,7 +31303,7 @@ function showExitSplash() {
   if (splash && !splash.isDestroyed()) {
     splash.webContents.once("did-finish-load", () => {
       splash == null ? void 0 : splash.webContents.executeJavaScript(
-        `window.updateProgress(100, "Salvataggio e Chiusura...")`
+        `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
       );
     });
     splash.webContents.executeJavaScript(
@@ -31315,19 +31315,21 @@ function showExitSplash() {
 async function setupApp() {
   createSplashWindow();
   await new Promise((r) => setTimeout(r, 500));
-  splash == null ? void 0 : splash.webContents.executeJavaScript(`window.updateProgress(20, "Connessione Database...")`).catch(() => {
+  splash == null ? void 0 : splash.webContents.executeJavaScript(
+    `if(window.updateProgress) window.updateProgress(20, "Connessione Database...")`
+  ).catch(() => {
   });
   const dbOk = initDB();
   if (!dbOk) {
     electron.dialog.showErrorBox(
       "Errore Critico",
-      "Impossibile inizializzare il Database."
+      "Impossibile inizializzare il Database.\nControlla i permessi della cartella."
     );
     electron.app.quit();
     return;
   }
   splash == null ? void 0 : splash.webContents.executeJavaScript(
-    `window.updateProgress(60, "Caricamento Interfaccia...")`
+    `if(window.updateProgress) window.updateProgress(60, "Caricamento Interfaccia...")`
   ).catch(() => {
   });
   createMainWindow();
@@ -31349,7 +31351,9 @@ function createMainWindow() {
     win.loadURL(process.env.VITE_DEV_SERVER_URL + "src/renderer/index.html");
   else win.loadFile(path.join(__dirname, "../../dist/index.html"));
   win.once("ready-to-show", () => {
-    splash == null ? void 0 : splash.webContents.executeJavaScript(`window.updateProgress(100, "Avvio completato")`).catch(() => {
+    splash == null ? void 0 : splash.webContents.executeJavaScript(
+      `if(window.updateProgress) window.updateProgress(100, "Avvio completato")`
+    ).catch(() => {
     });
     setTimeout(() => {
       splash == null ? void 0 : splash.destroy();
@@ -31393,12 +31397,26 @@ function createMainWindow() {
   electron.ipcMain.handle("open-backup-folder", () => openBackupFolder());
   electron.ipcMain.handle("restore-backup", async (e, filename) => {
     logSystem("ACTION", `Richiesto ripristino backup: ${filename}`);
+    closeDB();
     const success = restoreBackup(filename);
     if (success) {
-      electron.app.relaunch();
-      electron.app.exit(0);
+      logSystem(
+        "INFO",
+        "Backup ripristinato su disco. Riavvio connessione DB..."
+      );
+      const dbOk = initDB();
+      if (dbOk) {
+        win == null ? void 0 : win.reload();
+        return true;
+      } else {
+        logSystem(
+          "ERROR",
+          "Impossibile reinizializzare il DB dopo il restore."
+        );
+        return false;
+      }
     }
-    return success;
+    return false;
   });
   electron.ipcMain.handle("quit-app", () => {
     if (win) win.hide();
@@ -31411,8 +31429,8 @@ function createMainWindow() {
   electron.ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
     const res = await electron.dialog.showSaveDialog(win, {
       title: "Esporta Morosi",
-      // Sanifichiamo il nome file rimuovendo caratteri strani
-      defaultPath: `Morosi_${acquistoNome.replace(/[^a-zA-Z0-9à-ùÀ-Ù\s]/g, "").trim().replace(/\s+/g, "_")}.xlsx`,
+      // Rimuoviamo caratteri non validi per Windows
+      defaultPath: `Morosi_${acquistoNome.replace(/[^a-zA-Z0-9à-ùÀ-Ù\s_-]/g, "").trim().replace(/\s+/g, "_")}.xlsx`,
       filters: [{ name: "Excel File", extensions: ["xlsx"] }]
     });
     if (res.canceled || !res.filePath) return false;
@@ -31428,25 +31446,23 @@ function createMainWindow() {
         { wch: 15 }
       ];
       utils.book_append_sheet(wb, ws, "Morosi");
-      const excelBuffer = writeSync(wb, { bookType: "xlsx", type: "buffer" });
-      fs.writeFileSync(res.filePath, excelBuffer);
+      const buffer = writeSync(wb, { bookType: "xlsx", type: "buffer" });
+      fs.writeFileSync(res.filePath, buffer);
       return true;
     } catch (err) {
       console.error("Errore export excel:", err);
       if (err.code === "EBUSY") {
+        throw new Error(`IL FILE È GIÀ APERTO!
+Chiudi Excel e riprova.`);
+      }
+      if (err.code === "EPERM" || err.code === "EACCES") {
         throw new Error(
-          `IL FILE È APERTO!
-Chiudi il file Excel "${path.basename(
-            res.filePath
-          )}" e riprova.`
+          `PERMESSO NEGATO.
+Windows ha bloccato il salvataggio in questa cartella.
+Prova a salvare sul Desktop.`
         );
       }
-      if (err.code === "EPERM") {
-        throw new Error(
-          "Permesso negato. Prova a salvare in un'altra cartella (es. Desktop o Documenti)."
-        );
-      }
-      throw new Error(`Impossibile salvare: ${err.message}`);
+      throw new Error(`Errore tecnico: ${err.message}`);
     }
   });
   electron.ipcMain.handle("select-file", async () => {
