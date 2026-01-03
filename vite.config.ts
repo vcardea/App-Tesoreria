@@ -13,8 +13,6 @@ export default defineConfig({
           build: {
             outDir: "dist-electron/main",
             rollupOptions: {
-              // QUI IL TRUCCO: Lasciamo esterno SOLO better-sqlite3
-              // pdf-parse verrà inglobato nel file finale, risolvendo l'errore "Cannot find module"
               external: ["better-sqlite3"],
             },
           },

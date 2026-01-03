@@ -6,40 +6,34 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
-    "preview": "vite preview"
+    "postinstall": "electron-builder install-app-deps"
   },
   "build": {
-    "appId": "app-tesoriere",
-    "productName": "Tesoriere App",
+    "appId": "com.tesoriere.app",
+    "productName": "Tesoriere",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
+      "dist-electron/**/*",
       "package.json"
     ],
     "win": {
       "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
-        }
+        "nsis"
       ],
-      "icon": "build/icon.ico"
+      "icon": "public/icon.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
-    }
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "asarUnpack": [
+      "**/*.node"
+    ]
   },
   "dependencies": {
     "better-sqlite3": "^11.1.0",
