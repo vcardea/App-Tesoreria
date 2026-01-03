@@ -19,17 +19,19 @@ contextBridge.exposeInMainWorld("api", {
   updateMembro: (id: number, m: any) =>
     ipcRenderer.invoke("update-membro", { id, membro: m }),
   deleteMembro: (id: number) => ipcRenderer.invoke("delete-membro", id),
+  deleteAllMembri: () => ipcRenderer.invoke("delete-all-membri"), // Nuovo
   importMembriExcel: (path: string) =>
     ipcRenderer.invoke("import-membri-excel", path),
 
-  // ACQUISTI
   createAcquisto: (data: any) => ipcRenderer.invoke("create-acquisto", data),
   updateAcquisto: (data: any) => ipcRenderer.invoke("update-acquisto", data),
   deleteAcquisto: (id: number) => ipcRenderer.invoke("delete-acquisto", id),
-  getAcquisti: (attivi?: boolean) => ipcRenderer.invoke("get-acquisti", attivi),
+  getAcquisti: () => ipcRenderer.invoke("get-acquisti"),
   getQuote: (id: number) => ipcRenderer.invoke("get-quote", id),
   updateQuota: (data: any) => ipcRenderer.invoke("update-quota", data),
   completaAcquisto: (id: number) => ipcRenderer.invoke("completa-acquisto", id),
+
+  exportDebtors: (params: any) => ipcRenderer.invoke("export-debtors", params), // Nuovo
 
   selectFile: () => ipcRenderer.invoke("select-file"),
   analyzeExcelBank: (path: string) =>

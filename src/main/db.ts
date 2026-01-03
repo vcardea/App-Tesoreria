@@ -5,7 +5,7 @@ import fs from "fs";
 import { logSystem } from "./logger";
 
 const userDataPath = app.getPath("userData");
-const dbPath = path.join(userDataPath, "tesoriere.db");
+const dbPath = path.join(userDataPath, "tesoreria.db");
 const backupDir = path.join(userDataPath, "backups");
 
 if (!fs.existsSync(userDataPath))
@@ -196,31 +196,21 @@ export function getMembri() {
     .all();
 }
 
-// --- FIX: LOGICA "RESURREZIONE" ---
 export function addMembro(m: any) {
-  // 1. Cerchiamo se esiste GIA' (anche se eliminato)
   const existing = db
     .prepare("SELECT id, deleted_at FROM membri WHERE nome = ? AND cognome = ?")
     .get(m.nome, m.cognome) as any;
-
   if (existing) {
-    // 2a. Se esiste ed è eliminato -> LO RIPORTIAMO IN VITA
     if (existing.deleted_at) {
-      logSystem(
-        "DB",
-        `Membro riattivato (Soft Delete Undo): ${m.cognome} ${m.nome}`
-      );
+      logSystem("DB", `Membro riattivato: ${m.cognome} ${m.nome}`);
       return db
         .prepare(
           "UPDATE membri SET deleted_at = NULL, matricola = ? WHERE id = ?"
         )
         .run(m.matricola || null, existing.id);
     }
-    // 2b. Se esiste ed è attivo -> Non facciamo nulla (0 changes)
     return { changes: 0 };
   }
-
-  // 3. Se non esiste -> INSERIAMO NUOVO
   return db
     .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
     .run(m.nome, m.cognome, m.matricola || null);
@@ -237,6 +227,15 @@ export function deleteMembro(id: number) {
   return db
     .prepare("UPDATE membri SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?")
     .run(id);
+}
+
+// NUOVO: DELETE ALL MEMBRI
+export function deleteAllMembri() {
+  return db
+    .prepare(
+      "UPDATE membri SET deleted_at = CURRENT_TIMESTAMP WHERE deleted_at IS NULL"
+    )
+    .run();
 }
 
 // Acquisti

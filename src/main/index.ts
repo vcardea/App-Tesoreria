@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
 import fs from "fs";
+import * as XLSX from "xlsx";
 import {
   initDB,
   closeDB,
@@ -9,6 +10,7 @@ import {
   addMembro,
   updateMembro,
   deleteMembro,
+  deleteAllMembri,
   createAcquisto,
   getAcquisti,
   getQuoteAcquisto,
@@ -22,7 +24,7 @@ import {
   updateAcquisto,
   deleteAcquisto,
 } from "./db";
-import { parseBankStatement, parseMembersList } from "./excel_parser"; // Nuovo import
+import { parseBankStatement, parseMembersList } from "./excel_parser";
 import { logSystem, openSystemLog } from "./logger";
 
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
@@ -35,97 +37,130 @@ const iconPath = process.env.VITE_DEV_SERVER_URL
   : path.join(__dirname, "../../dist/icon.png");
 
 function getPreloadPath() {
-  const p = path.join(
+  return path.join(
     __dirname,
-    process.env.VITE_DEV_SERVER_URL ? "preload.js" : "../preload/preload.js"
+    process.env.VITE_DEV_SERVER_URL
+      ? "../preload/preload.js"
+      : "../preload/preload.js"
   );
-  return fs.existsSync(p)
-    ? p
-    : path.resolve(
-        __dirname,
-        process.env.VITE_DEV_SERVER_URL ? "../preload/preload.js" : "preload.js"
-      );
-}
-
-function updateSplash(percent: number, text: string) {
-  if (splash && !splash.isDestroyed())
-    splash.webContents.executeJavaScript(
-      `window.updateProgress(${percent}, "${text}")`
-    );
 }
 
 function createSplashWindow() {
   splash = new BrowserWindow({
-    width: 400,
+    width: 450,
     height: 300,
+    transparent: true,
     frame: false,
     alwaysOnTop: true,
-    transparent: false,
-    center: true,
-    backgroundColor: "#0f172a",
     icon: iconPath,
-    webPreferences: { nodeIntegration: false, contextIsolation: true },
+    resizable: false,
+    webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
-  const splashFile = process.env.VITE_DEV_SERVER_URL
+
+  // CARICAMENTO FILE ESTERNO (corregge il problema "sidebar")
+  const splashPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), "public/splash.html")
     : path.join(__dirname, "../../dist/splash.html");
-  splash.loadFile(splashFile);
+
+  splash.loadFile(splashPath);
 }
 
-function setupApp() {
-  logSystem("INFO", "--- STARTUP ---");
-  updateSplash(30, "Inizializzazione Database...");
+function showExitSplash() {
+  if (splash && !splash.isDestroyed()) {
+    splash.show();
+  } else {
+    createSplashWindow();
+  }
+  if (splash && !splash.isDestroyed()) {
+    // Aspetta che il file sia caricato prima di eseguire JS
+    splash.webContents.once("did-finish-load", () => {
+      splash?.webContents.executeJavaScript(
+        `window.updateProgress(100, "Salvataggio e Chiusura...")`
+      );
+    });
+    // Se è già caricato, eseguilo subito
+    splash.webContents
+      .executeJavaScript(
+        `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
+      )
+      .catch(() => {});
+  }
+}
 
-  setTimeout(() => {
-    if (!initDB()) {
-      if (splash) splash.setAlwaysOnTop(false);
-      dialog.showErrorBox("Errore", "Impossibile caricare il database.");
-      app.quit();
-    } else {
-      updateSplash(100, "Pronto!");
-      createMainWindow();
-    }
-  }, 1000);
+async function setupApp() {
+  createSplashWindow();
 
-  // Handlers
-  ipcMain.handle("log-ui-action", (e, msg) =>
-    logSystem("ACTION", `[UI] ${msg}`)
-  );
-  ipcMain.handle("open-log-file", () => openSystemLog());
-  ipcMain.handle("quit-app", () => {
-    if (win) win.hide();
-    updateSplash(50, "Salvataggio...");
-    closeDB();
-    setTimeout(() => app.quit(), 500);
+  // Piccolo delay per permettere il caricamento del DOM della splash
+  await new Promise((r) => setTimeout(r, 500));
+  splash?.webContents
+    .executeJavaScript(`window.updateProgress(20, "Connessione Database...")`)
+    .catch(() => {});
+
+  const dbOk = initDB();
+
+  if (!dbOk) {
+    dialog.showErrorBox(
+      "Errore Critico",
+      "Impossibile inizializzare il Database."
+    );
+    app.quit();
+    return;
+  }
+
+  splash?.webContents
+    .executeJavaScript(
+      `window.updateProgress(60, "Caricamento Interfaccia...")`
+    )
+    .catch(() => {});
+  createMainWindow();
+}
+
+function createMainWindow() {
+  win = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    show: false,
+    backgroundColor: "#0f172a",
+    icon: iconPath,
+    webPreferences: {
+      preload: getPreloadPath(),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
   });
-  ipcMain.handle("get-backups", () => getBackupsList());
-  ipcMain.handle("open-backup-folder", () => openBackupFolder());
-  ipcMain.handle("restore-backup", (e, filename) => {
-    logSystem("ACTION", `Restore richiesto: ${filename}`);
-    const success = restoreBackup(filename);
-    if (success) {
-      logSystem("INFO", "Restore riuscito, riavvio.");
-      app.relaunch();
-      app.exit(0);
-    } else {
-      logSystem("ERROR", "Restore fallito (check log)");
-    }
-    return success;
+
+  if (process.env.VITE_DEV_SERVER_URL)
+    win.loadURL(process.env.VITE_DEV_SERVER_URL + "src/renderer/index.html");
+  else win.loadFile(path.join(__dirname, "../../dist/index.html"));
+
+  win.once("ready-to-show", () => {
+    splash?.webContents
+      .executeJavaScript(`window.updateProgress(100, "Avvio completato")`)
+      .catch(() => {});
+    setTimeout(() => {
+      splash?.destroy();
+      splash = null;
+      win?.show();
+    }, 500);
   });
 
-  // DB API
+  // --- HANDLERS ---
+
+  // DB
   ipcMain.handle("get-situazione", () => getSituazioneGlobale());
-  ipcMain.handle("add-movimento-fondo", (e, d) =>
-    addMovimentoFondo(d.importo, d.descrizione)
+  ipcMain.handle("add-movimento-fondo", (e, data) =>
+    addMovimentoFondo(data.importo, data.descrizione)
   );
   ipcMain.handle("get-movimenti-fondo", () => getMovimentiFondo());
 
   ipcMain.handle("get-membri", () => getMembri());
   ipcMain.handle("add-membro", (e, m) => addMembro(m));
-  ipcMain.handle("update-membro", (e, d) => updateMembro(d.id, d.membro));
+  ipcMain.handle("update-membro", (e, { id, membro }) =>
+    updateMembro(id, membro)
+  );
   ipcMain.handle("delete-membro", (e, id) => deleteMembro(id));
+  ipcMain.handle("delete-all-membri", () => deleteAllMembri());
 
-  // ACQUISTI UPDATED
   ipcMain.handle("create-acquisto", (e, d) =>
     createAcquisto(d.nome, d.prezzo, d.acconto)
   );
@@ -135,10 +170,96 @@ function setupApp() {
   ipcMain.handle("delete-acquisto", (e, id) => deleteAcquisto(id));
   ipcMain.handle("get-acquisti", () => getAcquisti());
   ipcMain.handle("get-quote", (e, id) => getQuoteAcquisto(id));
-  ipcMain.handle("update-quota", (e, d) => updateQuota(d.id, d.qta, d.versato));
+  ipcMain.handle("update-quota", (e, { id, qta, versato }) =>
+    updateQuota(id, qta, versato)
+  );
   ipcMain.handle("completa-acquisto", (e, id) => setAcquistoCompletato(id));
 
-  // File Handlers
+  // SYSTEM
+  ipcMain.handle("log-ui-action", (e, msg) => logSystem("ACTION", msg));
+  ipcMain.handle("open-log-file", () => openSystemLog());
+  ipcMain.handle("get-backups", () => getBackupsList());
+  ipcMain.handle("open-backup-folder", () => openBackupFolder());
+
+  ipcMain.handle("restore-backup", async (e, filename) => {
+    logSystem("ACTION", `Richiesto ripristino backup: ${filename}`);
+    const success = restoreBackup(filename);
+    if (success) {
+      app.relaunch();
+      app.exit(0);
+    }
+    return success;
+  });
+
+  ipcMain.handle("quit-app", () => {
+    if (win) win.hide();
+    showExitSplash();
+    closeDB();
+    setTimeout(() => {
+      app.quit();
+    }, 2000);
+  });
+
+  // --- FIX EXPORT EXCEL ---
+  ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
+    // 1. Chiedi all'utente dove salvare
+    const res = await dialog.showSaveDialog(win!, {
+      title: "Esporta Morosi",
+      // Sanifichiamo il nome file rimuovendo caratteri strani
+      defaultPath: `Morosi_${acquistoNome
+        .replace(/[^a-zA-Z0-9à-ùÀ-Ù\s]/g, "")
+        .trim()
+        .replace(/\s+/g, "_")}.xlsx`,
+      filters: [{ name: "Excel File", extensions: ["xlsx"] }],
+    });
+
+    if (res.canceled || !res.filePath) return false;
+
+    try {
+      // 2. Crea il workbook in memoria
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(debtors);
+
+      // Imposta larghezza colonne
+      ws["!cols"] = [
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 10 },
+        { wch: 15 },
+        { wch: 15 },
+        { wch: 15 },
+      ];
+      XLSX.utils.book_append_sheet(wb, ws, "Morosi");
+
+      // 3. Genera il buffer BINARIO (invece di far salvare a XLSX)
+      const excelBuffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
+
+      // 4. Scrivi il file usando FS nativo (più controllo sugli errori)
+      fs.writeFileSync(res.filePath, excelBuffer);
+
+      return true;
+    } catch (err: any) {
+      console.error("Errore export excel:", err);
+
+      // 5. Gestione Errori Specifica
+      if (err.code === "EBUSY") {
+        throw new Error(
+          `IL FILE È APERTO!\nChiudi il file Excel "${path.basename(
+            res.filePath
+          )}" e riprova.`
+        );
+      }
+      if (err.code === "EPERM") {
+        throw new Error(
+          "Permesso negato. Prova a salvare in un'altra cartella (es. Desktop o Documenti)."
+        );
+      }
+
+      throw new Error(`Impossibile salvare: ${err.message}`);
+    }
+  });
+
+  // FILE
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
@@ -163,34 +284,7 @@ function setupApp() {
   });
 }
 
-function createMainWindow() {
-  win = new BrowserWindow({
-    width: 1400,
-    height: 900,
-    show: false,
-    backgroundColor: "#0f172a",
-    icon: iconPath,
-    webPreferences: {
-      preload: getPreloadPath(),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-  });
-  if (process.env.VITE_DEV_SERVER_URL)
-    win.loadURL(process.env.VITE_DEV_SERVER_URL + "src/renderer/index.html");
-  else win.loadFile(path.join(__dirname, "../../dist/index.html"));
-  win.once("ready-to-show", () => {
-    setTimeout(() => {
-      if (splash) splash.close();
-      if (win) win.show();
-    }, 500);
-  });
-}
-
-app.whenReady().then(() => {
-  createSplashWindow();
-  setTimeout(setupApp, 500);
-});
+app.whenReady().then(setupApp);
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });

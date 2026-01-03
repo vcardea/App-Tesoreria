@@ -1,5 +1,5 @@
 {
-  "name": "tesoriere-app",
+  "name": "app-tesoreria",
   "private": true,
   "version": "1.0.0",
   "main": "dist-electron/main/index.js",
@@ -9,8 +9,8 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "build": {
-    "appId": "com.tesoriere.app",
-    "productName": "Tesoriere",
+    "appId": "com.tesoreria.app",
+    "productName": "App Tesoreria",
     "directories": {
       "output": "release"
     },
