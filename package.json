@@ -1,7 +1,12 @@
 {
-  "name": "Tesoreria",
+  "name": "app-tesoreria",
+  "productionName": "App Tesoreria",
   "private": true,
   "version": "1.0.0",
+  "description": "Software gestionale per tesoreria, gestione membri, acquisti e riconciliazione bancaria.",
+  "author": {
+    "name": "mata"
+  },
   "main": "dist-electron/main/index.js",
   "scripts": {
     "dev": "vite",
@@ -23,7 +28,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "public/icon.png"
+      "icon": "public/icon.ico"
     },
     "nsis": {
       "oneClick": false,
