@@ -14,13 +14,11 @@ if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
 let db: Database.Database;
 
-// --- BACKUP SYSTEM 2.0 (Ordinamento per nome) ---
+// --- BACKUP SYSTEM ---
 function performBackup() {
   if (!fs.existsSync(dbPath)) return;
-
   try {
     const now = new Date();
-    // Formato rigoroso: YYYY-MM-DD_HH-mm-ss
     const timestamp =
       now.getFullYear() +
       "-" +
@@ -36,10 +34,8 @@ function performBackup() {
 
     const backupName = `backup_${timestamp}.db`;
     const backupPath = path.join(backupDir, backupName);
-
     fs.copyFileSync(dbPath, backupPath);
     logSystem("INFO", `Backup creato: ${backupName}`);
-
     cleanOldBackups();
   } catch (e) {
     logSystem("ERROR", "Errore creazione backup", e);
@@ -48,22 +44,12 @@ function performBackup() {
 
 function cleanOldBackups() {
   try {
-    // 1. Leggi tutti i file che iniziano con 'backup_'
     const files = fs
       .readdirSync(backupDir)
       .filter((f) => f.startsWith("backup_") && f.endsWith(".db"));
-
-    // 2. Ordina alfabeticamente (inverso: dal più nuovo al più vecchio)
-    // Essendo ISO timestamp nel nome, l'ordine alfabetico = ordine cronologico
     files.sort().reverse();
-
-    // 3. Se ce ne sono più di 10, cancella gli eccedenti (quelli in fondo alla lista)
     if (files.length > 10) {
-      const toDelete = files.slice(10);
-      toDelete.forEach((f) => {
-        fs.unlinkSync(path.join(backupDir, f));
-        logSystem("INFO", `Backup ruotato (eliminato): ${f}`);
-      });
+      files.slice(10).forEach((f) => fs.unlinkSync(path.join(backupDir, f)));
     }
   } catch (e) {
     logSystem("ERROR", "Errore pulizia backup", e);
@@ -76,7 +62,6 @@ export function openBackupFolder() {
 
 export function getBackupsList() {
   try {
-    // Ritorna la lista ordinata per data (nome) decrescente
     return fs
       .readdirSync(backupDir)
       .filter((f) => f.endsWith(".db"))
@@ -93,36 +78,17 @@ export function getBackupsList() {
 
 export function restoreBackup(filename: string) {
   try {
-    // 1. CHIUDIAMO LA CONNESSIONE ESPLICITAMENTE
-    if (db && db.open) {
-      db.close();
-      console.log("🔒 DB chiuso per restore.");
-    }
-
+    if (db && db.open) db.close();
     const source = path.join(backupDir, filename);
-    if (!fs.existsSync(source)) {
-      logSystem("ERROR", "File backup non trovato su disco");
-      return false;
-    }
-
-    // 2. PULIZIA TOTALE (Sia .db che i file temporanei WAL/SHM)
-    // Se non cancelli WAL e SHM, sqlite al riavvio cercherà di "fondere" i vecchi log col nuovo db -> CORRUZIONE/BLOCCO
+    if (!fs.existsSync(source)) return false;
     try {
       if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
       if (fs.existsSync(dbPath + "-wal")) fs.unlinkSync(dbPath + "-wal");
       if (fs.existsSync(dbPath + "-shm")) fs.unlinkSync(dbPath + "-shm");
-    } catch (err: any) {
-      logSystem("ERROR", `Impossibile pulire vecchi file DB: ${err.message}`);
-      // Proseguiamo comunque, potrebbe funzionare lo stesso sovrascrivendo
-    }
-
-    // 3. COPIA
+    } catch (err: any) {}
     fs.copyFileSync(source, dbPath);
-
-    logSystem("ACTION", `Database ripristinato correttamente da: ${filename}`);
     return true;
   } catch (e: any) {
-    logSystem("ERROR", "Fallimento critico restore backup", e.message);
     return false;
   }
 }
@@ -134,7 +100,6 @@ export function initDB() {
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
 
-    // Tabelle base
     db.exec(
       `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL, matricola TEXT);`
     );
@@ -148,18 +113,25 @@ export function initDB() {
       `CREATE TABLE IF NOT EXISTS fondo_cassa (id INTEGER PRIMARY KEY AUTOINCREMENT, importo REAL NOT NULL, descrizione TEXT, data DATETIME DEFAULT CURRENT_TIMESTAMP);`
     );
 
-    // MIGRAZIONE: Aggiungi colonna acconto_fornitore se non esiste
     try {
       const tableInfo = db.pragma("table_info(acquisti)") as any[];
-      const hasAcconto = tableInfo.some((c) => c.name === "acconto_fornitore");
-      if (!hasAcconto) {
+      if (!tableInfo.some((c) => c.name === "acconto_fornitore")) {
         db.exec(
           "ALTER TABLE acquisti ADD COLUMN acconto_fornitore REAL DEFAULT 0"
         );
-        logSystem("DB", "Colonna acconto_fornitore aggiunta");
+      }
+    } catch (e) {}
+
+    try {
+      const tableInfo = db.pragma("table_info(membri)") as any[];
+      if (!tableInfo.some((c) => c.name === "deleted_at")) {
+        db.exec(
+          "ALTER TABLE membri ADD COLUMN deleted_at DATETIME DEFAULT NULL"
+        );
+        logSystem("DB", "Colonna deleted_at aggiunta");
       }
     } catch (e) {
-      logSystem("ERROR", "Errore migrazione DB", e);
+      logSystem("ERROR", "Errore migrazione deleted_at", e);
     }
 
     return true;
@@ -179,9 +151,6 @@ export function getSituazioneGlobale() {
       `SELECT (COALESCE((SELECT SUM(importo_versato) FROM quote_membri), 0) + COALESCE((SELECT SUM(importo) FROM fondo_cassa), 0)) as total`
     )
     .get() as any;
-  // Le uscite sono: (prezzo * qta) degli acquisti completati OPPURE acconti versati per quelli aperti
-  // Ma per semplicità contabile: i soldi escono quando paghi il fornitore.
-  // Calcolo semplificato: Uscite = Acquisti Completati (Totale) + Acconti su Acquisti Aperti
   const usciteCompletati = db
     .prepare(
       `SELECT SUM(q.quantita * a.prezzo_unitario) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 1`
@@ -192,17 +161,14 @@ export function getSituazioneGlobale() {
       `SELECT SUM(acconto_fornitore) as total FROM acquisti WHERE completato = 0`
     )
     .get() as any;
-
   const totaleUscite =
     (usciteCompletati.total || 0) + (accontiAperti.total || 0);
-
   const vincolati = db
     .prepare(
       `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0`
     )
     .get() as any;
   const reale = (entrate.total || 0) - totaleUscite;
-
   return {
     fondo_cassa_reale: reale,
     fondi_vincolati: vincolati.total || 0,
@@ -223,18 +189,43 @@ export function getMovimentiFondo() {
 
 // Membri
 export function getMembri() {
-  return db.prepare("SELECT * FROM membri ORDER BY cognome ASC").all();
+  return db
+    .prepare(
+      "SELECT * FROM membri WHERE deleted_at IS NULL ORDER BY cognome ASC"
+    )
+    .all();
 }
+
+// --- FIX: LOGICA "RESURREZIONE" ---
 export function addMembro(m: any) {
-  // Evita duplicati basici (Nome + Cognome uguali)
-  const exists = db
-    .prepare("SELECT id FROM membri WHERE nome = ? AND cognome = ?")
-    .get(m.nome, m.cognome);
-  if (exists) return { changes: 0 };
+  // 1. Cerchiamo se esiste GIA' (anche se eliminato)
+  const existing = db
+    .prepare("SELECT id, deleted_at FROM membri WHERE nome = ? AND cognome = ?")
+    .get(m.nome, m.cognome) as any;
+
+  if (existing) {
+    // 2a. Se esiste ed è eliminato -> LO RIPORTIAMO IN VITA
+    if (existing.deleted_at) {
+      logSystem(
+        "DB",
+        `Membro riattivato (Soft Delete Undo): ${m.cognome} ${m.nome}`
+      );
+      return db
+        .prepare(
+          "UPDATE membri SET deleted_at = NULL, matricola = ? WHERE id = ?"
+        )
+        .run(m.matricola || null, existing.id);
+    }
+    // 2b. Se esiste ed è attivo -> Non facciamo nulla (0 changes)
+    return { changes: 0 };
+  }
+
+  // 3. Se non esiste -> INSERIAMO NUOVO
   return db
     .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
     .run(m.nome, m.cognome, m.matricola || null);
 }
+
 export function updateMembro(id: number, m: any) {
   return db
     .prepare(
@@ -243,7 +234,9 @@ export function updateMembro(id: number, m: any) {
     .run(m.nome, m.cognome, m.matricola || null, id);
 }
 export function deleteMembro(id: number) {
-  return db.prepare("DELETE FROM membri WHERE id = ?").run(id);
+  return db
+    .prepare("UPDATE membri SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run(id);
 }
 
 // Acquisti
@@ -255,7 +248,7 @@ export function createAcquisto(n: string, p: number, acconto: number = 0) {
       )
       .run(n, p, acconto).lastInsertRowid;
     db.prepare(
-      `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri`
+      `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri WHERE deleted_at IS NULL`
     ).run(id);
     return id;
   });
@@ -284,7 +277,7 @@ export function getAcquisti() {
 export function getQuoteAcquisto(id: number) {
   return db
     .prepare(
-      `SELECT q.*, m.nome, m.cognome, m.matricola FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
+      `SELECT q.*, m.nome, m.cognome, m.matricola, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
     )
     .all(id);
 }

@@ -63,11 +63,7 @@ function cleanOldBackups() {
     const files = fs.readdirSync(backupDir).filter((f) => f.startsWith("backup_") && f.endsWith(".db"));
     files.sort().reverse();
     if (files.length > 10) {
-      const toDelete = files.slice(10);
-      toDelete.forEach((f) => {
-        fs.unlinkSync(path.join(backupDir, f));
-        logSystem("INFO", `Backup ruotato (eliminato): ${f}`);
-      });
+      files.slice(10).forEach((f) => fs.unlinkSync(path.join(backupDir, f)));
     }
   } catch (e) {
     logSystem("ERROR", "Errore pulizia backup", e);
@@ -88,27 +84,18 @@ function getBackupsList() {
 }
 function restoreBackup(filename) {
   try {
-    if (db && db.open) {
-      db.close();
-      console.log("🔒 DB chiuso per restore.");
-    }
+    if (db && db.open) db.close();
     const source = path.join(backupDir, filename);
-    if (!fs.existsSync(source)) {
-      logSystem("ERROR", "File backup non trovato su disco");
-      return false;
-    }
+    if (!fs.existsSync(source)) return false;
     try {
       if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
       if (fs.existsSync(dbPath + "-wal")) fs.unlinkSync(dbPath + "-wal");
       if (fs.existsSync(dbPath + "-shm")) fs.unlinkSync(dbPath + "-shm");
     } catch (err) {
-      logSystem("ERROR", `Impossibile pulire vecchi file DB: ${err.message}`);
     }
     fs.copyFileSync(source, dbPath);
-    logSystem("ACTION", `Database ripristinato correttamente da: ${filename}`);
     return true;
   } catch (e) {
-    logSystem("ERROR", "Fallimento critico restore backup", e.message);
     return false;
   }
 }
@@ -131,15 +118,23 @@ function initDB() {
     );
     try {
       const tableInfo = db.pragma("table_info(acquisti)");
-      const hasAcconto = tableInfo.some((c) => c.name === "acconto_fornitore");
-      if (!hasAcconto) {
+      if (!tableInfo.some((c) => c.name === "acconto_fornitore")) {
         db.exec(
           "ALTER TABLE acquisti ADD COLUMN acconto_fornitore REAL DEFAULT 0"
         );
-        logSystem("DB", "Colonna acconto_fornitore aggiunta");
       }
     } catch (e) {
-      logSystem("ERROR", "Errore migrazione DB", e);
+    }
+    try {
+      const tableInfo = db.pragma("table_info(membri)");
+      if (!tableInfo.some((c) => c.name === "deleted_at")) {
+        db.exec(
+          "ALTER TABLE membri ADD COLUMN deleted_at DATETIME DEFAULT NULL"
+        );
+        logSystem("DB", "Colonna deleted_at aggiunta");
+      }
+    } catch (e) {
+      logSystem("ERROR", "Errore migrazione deleted_at", e);
     }
     return true;
   } catch (error) {
@@ -177,11 +172,24 @@ function getMovimentiFondo() {
   return db.prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT 50").all();
 }
 function getMembri() {
-  return db.prepare("SELECT * FROM membri ORDER BY cognome ASC").all();
+  return db.prepare(
+    "SELECT * FROM membri WHERE deleted_at IS NULL ORDER BY cognome ASC"
+  ).all();
 }
 function addMembro(m) {
-  const exists = db.prepare("SELECT id FROM membri WHERE nome = ? AND cognome = ?").get(m.nome, m.cognome);
-  if (exists) return { changes: 0 };
+  const existing = db.prepare("SELECT id, deleted_at FROM membri WHERE nome = ? AND cognome = ?").get(m.nome, m.cognome);
+  if (existing) {
+    if (existing.deleted_at) {
+      logSystem(
+        "DB",
+        `Membro riattivato (Soft Delete Undo): ${m.cognome} ${m.nome}`
+      );
+      return db.prepare(
+        "UPDATE membri SET deleted_at = NULL, matricola = ? WHERE id = ?"
+      ).run(m.matricola || null, existing.id);
+    }
+    return { changes: 0 };
+  }
   return db.prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)").run(m.nome, m.cognome, m.matricola || null);
 }
 function updateMembro(id, m) {
@@ -190,7 +198,7 @@ function updateMembro(id, m) {
   ).run(m.nome, m.cognome, m.matricola || null, id);
 }
 function deleteMembro(id) {
-  return db.prepare("DELETE FROM membri WHERE id = ?").run(id);
+  return db.prepare("UPDATE membri SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?").run(id);
 }
 function createAcquisto(n, p, acconto = 0) {
   const trx = db.transaction(() => {
@@ -198,7 +206,7 @@ function createAcquisto(n, p, acconto = 0) {
       "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore) VALUES (?, ?, ?)"
     ).run(n, p, acconto).lastInsertRowid;
     db.prepare(
-      `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri`
+      `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri WHERE deleted_at IS NULL`
     ).run(id);
     return id;
   });
@@ -217,7 +225,7 @@ function getAcquisti() {
 }
 function getQuoteAcquisto(id) {
   return db.prepare(
-    `SELECT q.*, m.nome, m.cognome, m.matricola FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
+    `SELECT q.*, m.nome, m.cognome, m.matricola, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
   ).all(id);
 }
 function updateQuota(id, q, v) {
@@ -26265,6 +26273,46 @@ const normalize = (s) => {
   if (!s) return "";
   return String(s).toUpperCase().replace(/\s+/g, " ").replace(/[^A-Z0-9 ]/g, "").trim();
 };
+const parseItalianCurrency = (value) => {
+  if (value === null || value === void 0 || value === "") return 0;
+  if (typeof value === "number") return value;
+  let str = String(value).trim();
+  if (str.includes(",")) {
+    if (str.includes(".")) str = str.replace(/\./g, "");
+    str = str.replace(",", ".");
+  }
+  const result = parseFloat(str);
+  return isNaN(result) ? 0 : result;
+};
+const parseExcelDate = (value) => {
+  if (!value) return null;
+  if (typeof value === "number") {
+    const excelEpoch = new Date(1899, 11, 30);
+    return new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1e3);
+  }
+  if (typeof value === "string") {
+    const cleanStr = value.trim();
+    if (cleanStr.includes("/")) {
+      const parts = cleanStr.split("/");
+      if (parts.length === 3)
+        return new Date(
+          parseInt(parts[2]),
+          parseInt(parts[1]) - 1,
+          parseInt(parts[0])
+        );
+    }
+    if (cleanStr.includes("-")) {
+      const parts = cleanStr.split("-");
+      if (parts.length === 3)
+        return new Date(
+          parseInt(parts[0]),
+          parseInt(parts[1]) - 1,
+          parseInt(parts[2])
+        );
+    }
+  }
+  return null;
+};
 function getWorkbook(filePath) {
   try {
     const fileBuffer = fs.readFileSync(filePath);
@@ -26280,26 +26328,35 @@ async function parseBankStatement(filePath, membri) {
   try {
     const workbook = getWorkbook(filePath);
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = utils.sheet_to_json(worksheet, { header: 1, raw: false });
+    const rows = utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: false
+    });
     let idxAvere = -1;
     let idxDesc = -1;
+    let idxData = -1;
     for (let r = 0; r < Math.min(rows.length, 20); r++) {
       const rowStr = rows[r].map((c) => normalize(c));
-      if (rowStr.includes("AVERE")) idxAvere = rowStr.indexOf("AVERE");
-      if (rowStr.includes("DESCRIZIONE") || rowStr.includes("CAUSALE")) idxDesc = rowStr.indexOf("DESCRIZIONE") > -1 ? rowStr.indexOf("DESCRIZIONE") : rowStr.indexOf("CAUSALE");
+      if (rowStr.includes("AVERE") || rowStr.includes("ACCREDITI"))
+        idxAvere = rowStr.indexOf("AVERE") > -1 ? rowStr.indexOf("AVERE") : rowStr.indexOf("ACCREDITI");
+      if (rowStr.includes("DESCRIZIONE") || rowStr.includes("CAUSALE"))
+        idxDesc = rowStr.indexOf("DESCRIZIONE") > -1 ? rowStr.indexOf("DESCRIZIONE") : rowStr.indexOf("CAUSALE");
+      if (rowStr.includes("DATA") || rowStr.includes("OPERAZIONE"))
+        idxData = rowStr.indexOf("DATA") > -1 ? rowStr.indexOf("DATA") : rowStr.indexOf("OPERAZIONE");
       if (idxAvere > -1 && idxDesc > -1) break;
     }
     if (idxAvere === -1) idxAvere = 3;
     if (idxDesc === -1) idxDesc = 6;
+    if (idxData === -1) idxData = 1;
     const matches = [];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length < 3) continue;
-      let importoRaw = row[idxAvere];
+      const importoRaw = row[idxAvere];
       if (!importoRaw) continue;
-      let importoStr = String(importoRaw).replace(/\./g, "").replace(",", ".");
-      const importo = parseFloat(importoStr);
+      const importo = parseItalianCurrency(importoRaw);
       if (isNaN(importo) || importo <= 0.01) continue;
+      const dataMovimento = idxData > -1 ? parseExcelDate(row[idxData]) : void 0;
       const descrizione = row[idxDesc] ? String(row[idxDesc]) : row.join(" ");
       const searchString = normalize(descrizione);
       for (const m of membri) {
@@ -26308,10 +26365,10 @@ async function parseBankStatement(filePath, membri) {
         if (searchString.includes(nome) && searchString.includes(cognome)) {
           matches.push({
             linea_originale: descrizione.substring(0, 80) + "...",
-            // Taglia per leggibilità
             membro_id: m.id,
             nome_trovato: `${m.cognome} ${m.nome}`,
             importo_trovato: importo,
+            data_movimento: dataMovimento || void 0,
             confidenza: "CSV Match"
           });
           break;
@@ -26329,12 +26386,14 @@ async function parseMembersList(filePath) {
   try {
     const workbook = getWorkbook(filePath);
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = utils.sheet_to_json(worksheet, { header: 1, raw: false });
+    const rows = utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: false
+    });
     const newMembers = [];
     let headerFound = false;
     let idxCognome = -1;
     let idxNome = -1;
-    let idxGrado = -1;
     for (const row of rows) {
       const rowNorm = row.map((c) => normalize(c));
       if (!headerFound) {
@@ -26342,7 +26401,6 @@ async function parseMembersList(filePath) {
           headerFound = true;
           idxCognome = rowNorm.indexOf("COGNOME");
           idxNome = rowNorm.indexOf("NOME");
-          idxGrado = rowNorm.indexOf("GRADO");
           continue;
         }
       }
@@ -26362,7 +26420,9 @@ async function parseMembersList(filePath) {
   } catch (e) {
     console.error("Errore parser membri:", e);
     if (e.message.includes("APERTO IN EXCEL")) throw e;
-    throw new Error("Impossibile leggere l'elenco membri. Verifica che contenga COGNOME e NOME.");
+    throw new Error(
+      "Impossibile leggere l'elenco membri. Verifica che contenga COGNOME e NOME."
+    );
   }
 }
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
