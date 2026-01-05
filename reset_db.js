@@ -20,7 +20,7 @@ const targetPaths = [
     os.homedir(),
     "AppData",
     "Roaming",
-    "tesoriere-app",
+    "tesoreria-app",
     "tesoreria.db"
   ),
 ];

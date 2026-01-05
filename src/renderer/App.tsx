@@ -1032,7 +1032,7 @@ function App() {
           <span className="bg-green-500 text-black w-8 h-8 flex items-center justify-center rounded-lg mr-2 font-bold">
             T
           </span>{" "}
-          Tesoriere
+          Tesoreria
         </h1>
         <nav className="flex-1 space-y-2">
           {["dashboard", "membri", "acquisti"].map((tab) => (
