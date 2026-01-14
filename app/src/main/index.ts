@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from "electron";
 import path from "path";
-import fs from "fs"; // Assicurati che questo ci sia!
+import fs from "fs";
 import * as XLSX from "xlsx";
 import {
   initDB,
@@ -57,7 +57,6 @@ function createSplashWindow() {
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
 
-  // CARICAMENTO FILE ESTERNO PER EVITARE SIDEBAR
   const splashPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), "public/splash.html")
     : path.join(__dirname, "../../dist/splash.html");
@@ -72,13 +71,11 @@ function showExitSplash() {
     createSplashWindow();
   }
   if (splash && !splash.isDestroyed()) {
-    // Eseguiamo script solo quando il file è caricato
     splash.webContents.once("did-finish-load", () => {
       splash?.webContents.executeJavaScript(
         `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
       );
     });
-    // Tentativo immediato se già caricato
     splash.webContents
       .executeJavaScript(
         `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
@@ -164,8 +161,15 @@ function createMainWindow() {
   ipcMain.handle("delete-all-membri", () => deleteAllMembri());
 
   ipcMain.handle("create-acquisto", (e, d) =>
-    createAcquisto(d.nome, d.prezzo, d.acconto)
+    createAcquisto(
+      d.nome,
+      d.prezzo,
+      d.acconto,
+      d.targetMemberIds,
+      d.isFundExpense
+    )
   );
+
   ipcMain.handle("update-acquisto", (e, d) =>
     updateAcquisto(d.id, d.nome, d.prezzo, d.acconto)
   );
@@ -182,42 +186,21 @@ function createMainWindow() {
   ipcMain.handle("get-backups", () => getBackupsList());
   ipcMain.handle("open-backup-folder", () => openBackupFolder());
 
-  // --- RESTORE BACKUP CON SOFT RELOAD (FIX DEFINITIVO) ---
   ipcMain.handle("restore-backup", async (e, filename) => {
     logSystem("ACTION", `Richiesto ripristino backup: ${filename}`);
-
-    // 1. Chiudiamo esplicitamente la connessione al DB attuale
     closeDB();
-
-    // 2. Eseguiamo la copia del file (funzione sincrona in db.ts)
-    // Nota: restoreBackup in db.ts gestisce già la copia fisica
     const success = restoreBackup(filename);
-
     if (success) {
-      logSystem(
-        "INFO",
-        "Backup ripristinato su disco. Riavvio connessione DB..."
-      );
-
-      // 3. Rinizializziamo il DB (riapre la connessione al nuovo file)
+      logSystem("INFO", "Backup ripristinato. Riavvio DB...");
       const dbOk = initDB();
-
       if (dbOk) {
-        // 4. Invece di app.relaunch(), ricarichiamo solo la finestra!
-        // Questo resetta l'interfaccia React e carica i nuovi dati.
         win?.reload();
         return true;
-      } else {
-        logSystem(
-          "ERROR",
-          "Impossibile reinizializzare il DB dopo il restore."
-        );
-        return false;
       }
     }
-
     return false;
   });
+
   ipcMain.handle("quit-app", () => {
     if (win) win.hide();
     showExitSplash();
@@ -227,11 +210,9 @@ function createMainWindow() {
     }, 2000);
   });
 
-  // --- EXPORT DEBTORS FIX (METODO BUFFER) ---
   ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
     const res = await dialog.showSaveDialog(win!, {
       title: "Esporta Morosi",
-      // Rimuoviamo caratteri non validi per Windows
       defaultPath: `Morosi_${acquistoNome
         .replace(/[^a-zA-Z0-9à-ùÀ-Ù\s_-]/g, "")
         .trim()
@@ -244,6 +225,7 @@ function createMainWindow() {
     try {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(debtors);
+      // Colonne aggiustate (rimossa Matricola)
       ws["!cols"] = [
         { wch: 20 },
         { wch: 20 },
@@ -253,23 +235,17 @@ function createMainWindow() {
         { wch: 15 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Morosi");
-
-      // 1. Crea il buffer in memoria (Questo non fallisce mai per permessi)
       const buffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
-
-      // 2. Scrivi il file su disco usando FS nativo
       fs.writeFileSync(res.filePath, buffer);
-
       return true;
     } catch (err: any) {
       console.error("Errore export excel:", err);
-
       if (err.code === "EBUSY") {
         throw new Error(`IL FILE È GIÀ APERTO!\nChiudi Excel e riprova.`);
       }
       if (err.code === "EPERM" || err.code === "EACCES") {
         throw new Error(
-          `PERMESSO NEGATO.\nWindows ha bloccato il salvataggio in questa cartella.\nProva a salvare sul Desktop.`
+          `PERMESSO NEGATO.\nWindows ha bloccato il salvataggio.\nProva a salvare sul Desktop.`
         );
       }
       throw new Error(`Errore tecnico: ${err.message}`);

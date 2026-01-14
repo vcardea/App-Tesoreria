@@ -100,8 +100,9 @@ export function initDB() {
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
 
+    // RIMOSSA MATRICOLA DA QUI
     db.exec(
-      `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL, matricola TEXT);`
+      `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL);`
     );
     db.exec(
       `CREATE TABLE IF NOT EXISTS acquisti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome_acquisto TEXT NOT NULL, prezzo_unitario REAL NOT NULL, completato BOOLEAN DEFAULT 0, data_creazione DATETIME DEFAULT CURRENT_TIMESTAMP);`
@@ -113,6 +114,7 @@ export function initDB() {
       `CREATE TABLE IF NOT EXISTS fondo_cassa (id INTEGER PRIMARY KEY AUTOINCREMENT, importo REAL NOT NULL, descrizione TEXT, data DATETIME DEFAULT CURRENT_TIMESTAMP);`
     );
 
+    // MIGRATION 1: Acconto
     try {
       const tableInfo = db.pragma("table_info(acquisti)") as any[];
       if (!tableInfo.some((c) => c.name === "acconto_fornitore")) {
@@ -122,16 +124,27 @@ export function initDB() {
       }
     } catch (e) {}
 
+    // MIGRATION 2: Deleted At
     try {
       const tableInfo = db.pragma("table_info(membri)") as any[];
       if (!tableInfo.some((c) => c.name === "deleted_at")) {
         db.exec(
           "ALTER TABLE membri ADD COLUMN deleted_at DATETIME DEFAULT NULL"
         );
-        logSystem("DB", "Colonna deleted_at aggiunta");
+      }
+    } catch (e) {}
+
+    // MIGRATION 3: Spese da Fondo
+    try {
+      const tableInfo = db.pragma("table_info(acquisti)") as any[];
+      if (!tableInfo.some((c) => c.name === "is_fund_expense")) {
+        db.exec(
+          "ALTER TABLE acquisti ADD COLUMN is_fund_expense BOOLEAN DEFAULT 0"
+        );
+        logSystem("DB", "Colonna is_fund_expense aggiunta");
       }
     } catch (e) {
-      logSystem("ERROR", "Errore migrazione deleted_at", e);
+      logSystem("ERROR", "Errore migrazione is_fund_expense", e);
     }
 
     return true;
@@ -187,7 +200,7 @@ export function getMovimentiFondo() {
     .all();
 }
 
-// Membri
+// Membri (RIMOSSA MATRICOLA)
 export function getMembri() {
   return db
     .prepare(
@@ -203,25 +216,24 @@ export function addMembro(m: any) {
   if (existing) {
     if (existing.deleted_at) {
       logSystem("DB", `Membro riattivato: ${m.cognome} ${m.nome}`);
+      // Rimossa matricola dall'update
       return db
-        .prepare(
-          "UPDATE membri SET deleted_at = NULL, matricola = ? WHERE id = ?"
-        )
-        .run(m.matricola || null, existing.id);
+        .prepare("UPDATE membri SET deleted_at = NULL WHERE id = ?")
+        .run(existing.id);
     }
     return { changes: 0 };
   }
+  // Rimossa matricola dall'insert
   return db
-    .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
-    .run(m.nome, m.cognome, m.matricola || null);
+    .prepare("INSERT INTO membri (nome, cognome) VALUES (?, ?)")
+    .run(m.nome, m.cognome);
 }
 
 export function updateMembro(id: number, m: any) {
+  // Rimossa matricola dall'update
   return db
-    .prepare(
-      "UPDATE membri SET nome = ?, cognome = ?, matricola = ? WHERE id = ?"
-    )
-    .run(m.nome, m.cognome, m.matricola || null, id);
+    .prepare("UPDATE membri SET nome = ?, cognome = ? WHERE id = ?")
+    .run(m.nome, m.cognome, id);
 }
 export function deleteMembro(id: number) {
   return db
@@ -229,7 +241,6 @@ export function deleteMembro(id: number) {
     .run(id);
 }
 
-// NUOVO: DELETE ALL MEMBRI
 export function deleteAllMembri() {
   return db
     .prepare(
@@ -239,20 +250,45 @@ export function deleteAllMembri() {
 }
 
 // Acquisti
-export function createAcquisto(n: string, p: number, acconto: number = 0) {
+export function createAcquisto(
+  n: string,
+  p: number,
+  acconto: number,
+  targetIds: number[] | null,
+  isFund: boolean
+) {
   const trx = db.transaction(() => {
+    const isCompleted = isFund ? 1 : 0;
+
     const id = db
       .prepare(
-        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore) VALUES (?, ?, ?)"
+        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore, is_fund_expense, completato) VALUES (?, ?, ?, ?, ?)"
       )
-      .run(n, p, acconto).lastInsertRowid;
-    db.prepare(
-      `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri WHERE deleted_at IS NULL`
-    ).run(id);
+      .run(n, p, acconto, isFund ? 1 : 0, isCompleted).lastInsertRowid;
+
+    if (isFund) {
+      db.prepare(
+        "INSERT INTO fondo_cassa (importo, descrizione) VALUES (?, ?)"
+      ).run(-p, `USCITA DIRETTA: ${n}`);
+    } else {
+      if (targetIds && targetIds.length > 0) {
+        const stmt = db.prepare(
+          "INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) VALUES (?, ?, 1, 0)"
+        );
+        for (const mId of targetIds) {
+          stmt.run(id, mId);
+        }
+      } else {
+        db.prepare(
+          `INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) SELECT ?, id, 1, 0 FROM membri WHERE deleted_at IS NULL`
+        ).run(id);
+      }
+    }
     return id;
   });
   return trx();
 }
+
 export function updateAcquisto(
   id: number,
   n: string,
@@ -274,9 +310,10 @@ export function getAcquisti() {
     .all();
 }
 export function getQuoteAcquisto(id: number) {
+  // RIMOSSA MATRICOLA DALLA SELECT
   return db
     .prepare(
-      `SELECT q.*, m.nome, m.cognome, m.matricola, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
+      `SELECT q.*, m.nome, m.cognome, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
     )
     .all(id);
 }

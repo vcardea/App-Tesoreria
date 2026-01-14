@@ -27,6 +27,7 @@ import {
   FileWarning,
   Minus,
   Plus,
+  CheckSquare,
 } from "lucide-react";
 
 interface Quota {
@@ -34,7 +35,7 @@ interface Quota {
   membro_id: number;
   nome: string;
   cognome: string;
-  matricola: string;
+  // Rimossa matricola
   quantita: number;
   importo_versato: number;
 }
@@ -51,7 +52,7 @@ const formatCurrency = (amount: number) =>
 const cleanInput = (val: string) =>
   val.toUpperCase().replace(/[^A-Z0-9À-ÖØ-öø-ÿ' ]/g, "");
 
-// --- NUOVI TASTI QUANTITÀ (Belli grossi) ---
+// --- COMPONENTS ---
 const QuantityControl = ({
   value,
   onChange,
@@ -176,10 +177,16 @@ function App() {
   const [newMembro, setNewMembro] = useState({
     nome: "",
     cognome: "",
-    matricola: "",
+    // Rimossa matricola
   });
   const [editingMembroId, setEditingMembroId] = useState<number | null>(null);
+
   const [newAcq, setNewAcq] = useState({ nome: "", prezzo: "", acconto: "" });
+  const [isFundExpense, setIsFundExpense] = useState(false);
+  const [selectedMembersForPurchase, setSelectedMembersForPurchase] = useState<
+    number[]
+  >([]);
+
   const [editingAcq, setEditingAcq] = useState<{
     id: number;
     nome: string;
@@ -197,6 +204,7 @@ function App() {
   const [filterDateEnd, setFilterDateEnd] = useState("");
   const [searchQuota, setSearchQuota] = useState("");
   const [searchExcel, setSearchExcel] = useState("");
+  const [searchMemberSelector, setSearchMemberSelector] = useState("");
 
   const [excelDateStart, setExcelDateStart] = useState("");
   const [excelDateEnd, setExcelDateEnd] = useState("");
@@ -215,7 +223,8 @@ function App() {
       | "confirm_purchase"
       | "confirm_restore"
       | "alert"
-      | "edit_acquisto";
+      | "edit_acquisto"
+      | "select_members";
     data?: any;
   }>({ view: "none" });
 
@@ -235,13 +244,22 @@ function App() {
     loadData();
   }, []);
 
+  // FILTERS (Rimossa matricola)
   const filteredMembri = useMemo(() => {
     return membri.filter((m) =>
-      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
+      (m.nome + " " + m.cognome)
         .toUpperCase()
         .includes(searchMembri.toUpperCase())
     );
   }, [membri, searchMembri]);
+
+  const filteredMembriSelector = useMemo(() => {
+    return membri.filter((m) =>
+      (m.nome + " " + m.cognome)
+        .toUpperCase()
+        .includes(searchMemberSelector.toUpperCase())
+    );
+  }, [membri, searchMemberSelector]);
 
   const filteredFondo = useMemo(() => {
     return movimentiFondo.filter((m) => {
@@ -261,7 +279,7 @@ function App() {
 
   const filteredQuote = useMemo(() => {
     return quote.filter((q) =>
-      (q.nome + " " + q.cognome + " " + q.matricola)
+      (q.nome + " " + q.cognome)
         .toUpperCase()
         .includes(searchQuota.toUpperCase())
     );
@@ -285,7 +303,7 @@ function App() {
       });
   }, [excelMatches, searchExcel, excelDateStart, excelDateEnd]);
 
-  // --- MEMBRI ---
+  // ACTIONS
   const handleSaveMembro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMembro.nome || !newMembro.cognome) return;
@@ -295,19 +313,18 @@ function App() {
     } else {
       await window.api.addMembro(newMembro);
     }
-    setNewMembro({ nome: "", cognome: "", matricola: "" });
+    setNewMembro({ nome: "", cognome: "" });
     loadData();
   };
   const startEditMembro = (m: any) => {
     setNewMembro({
       nome: m.nome,
       cognome: m.cognome,
-      matricola: m.matricola || "",
     });
     setEditingMembroId(m.id);
   };
   const cancelEditMembro = () => {
-    setNewMembro({ nome: "", cognome: "", matricola: "" });
+    setNewMembro({ nome: "", cognome: "" });
     setEditingMembroId(null);
   };
   const handleDeleteMembroRequest = (id: number) => {
@@ -356,6 +373,7 @@ function App() {
     if (!newAcq.nome || !newAcq.prezzo) return;
     const p = parseFloat(newAcq.prezzo);
     const a = newAcq.acconto ? parseFloat(newAcq.acconto) : 0;
+
     if (p < 0 || a < 0) {
       setModal({
         view: "alert",
@@ -366,13 +384,38 @@ function App() {
       });
       return;
     }
+
+    let targetIds: number[] | null = null;
+    if (!isFundExpense && selectedMembersForPurchase.length > 0) {
+      targetIds = selectedMembersForPurchase;
+    }
+
     await window.api.createAcquisto({
       nome: newAcq.nome,
       prezzo: p,
-      acconto: a,
+      acconto: isFundExpense ? 0 : a,
+      targetMemberIds: targetIds,
+      isFundExpense: isFundExpense,
     });
+
     setNewAcq({ nome: "", prezzo: "", acconto: "" });
+    setIsFundExpense(false);
+    setSelectedMembersForPurchase([]);
     loadData();
+  };
+
+  const toggleMemberSelection = (id: number) => {
+    setSelectedMembersForPurchase((prev) =>
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
+    );
+  };
+
+  const selectAllMembers = () => {
+    if (selectedMembersForPurchase.length === membri.length) {
+      setSelectedMembersForPurchase([]);
+    } else {
+      setSelectedMembersForPurchase(membri.map((m) => m.id));
+    }
   };
 
   const handleUpdateAcquisto = async (e: React.FormEvent) => {
@@ -425,7 +468,6 @@ function App() {
       qta: newQta,
       versato: newVersato,
     });
-    // Non mostriamo caricamento per fluidità
     const newQuotes = await window.api.getQuote(selectedAcquisto.id);
     setQuote(newQuotes);
     setSituazione(await window.api.getSituazione());
@@ -441,6 +483,7 @@ function App() {
       .map((q) => ({
         Cognome: q.cognome,
         Nome: q.nome,
+        // Rimossa matricola
         Quantita: q.quantita,
         Dovuto: q.quantita * selectedAcquisto.prezzo_unitario,
         Versato: q.importo_versato,
@@ -449,7 +492,6 @@ function App() {
       }));
 
     if (debtors.length === 0) {
-      // Qui usiamo variant: "success" perché è una buona notizia!
       setModal({
         view: "alert",
         data: {
@@ -468,14 +510,13 @@ function App() {
         debtors,
       });
 
-      // SE IL SALVATAGGIO VA A BUON FINE (e l'utente non ha annullato)
       if (success) {
         setModal({
           view: "alert",
           data: {
             title: "Esportazione Completata",
             msg: "Il file Excel dei morosi è stato salvato con successo.",
-            variant: "success", // <--- Questo farà diventare il modale verde
+            variant: "success",
           },
         });
       }
@@ -565,7 +606,87 @@ function App() {
         </div>
       )}
 
-      {/* --- MODALI --- */}
+      {/* --- MODALE SELEZIONE MEMBRI --- */}
+      {modal.view === "select_members" && (
+        <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-gray-900 w-full max-w-2xl h-[80vh] rounded-2xl border border-gray-700 flex flex-col shadow-2xl">
+            <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-2xl">
+              <h3 className="font-bold text-xl flex items-center">
+                <ListChecks className="mr-2" /> Seleziona Destinatari
+              </h3>
+              <button onClick={() => setModal({ view: "none" })}>
+                <X />
+              </button>
+            </div>
+            <div className="p-4 bg-gray-800/50 flex gap-2 border-b border-gray-700">
+              <button
+                onClick={selectAllMembers}
+                className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs font-bold transition"
+              >
+                {selectedMembersForPurchase.length === membri.length
+                  ? "DESELEZIONA TUTTI"
+                  : "SELEZIONA TUTTI"}
+              </button>
+              <div className="relative flex-1">
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  size={16}
+                />
+                <input
+                  className="bg-black border border-gray-600 rounded-full px-10 py-2 text-sm w-full focus:border-blue-500 outline-none"
+                  placeholder="Cerca nome per selezionare..."
+                  value={searchMemberSelector}
+                  onChange={(e) => setSearchMemberSelector(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-1">
+              {filteredMembriSelector.map((m) => (
+                <div
+                  key={m.id}
+                  onClick={() => toggleMemberSelection(m.id)}
+                  className={`flex items-center p-3 rounded cursor-pointer border transition ${
+                    selectedMembersForPurchase.includes(m.id)
+                      ? "bg-blue-900/40 border-blue-500"
+                      : "bg-gray-800 border-transparent hover:bg-gray-700"
+                  }`}
+                >
+                  <div
+                    className={`w-5 h-5 rounded border mr-3 flex items-center justify-center transition ${
+                      selectedMembersForPurchase.includes(m.id)
+                        ? "bg-blue-500 border-blue-500"
+                        : "border-gray-500"
+                    }`}
+                  >
+                    {selectedMembersForPurchase.includes(m.id) && (
+                      <CheckCircle size={14} className="text-white" />
+                    )}
+                  </div>
+                  <span className="font-bold">
+                    {m.cognome} {m.nome}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="p-4 border-t border-gray-700 bg-gray-800 rounded-b-2xl flex justify-between items-center">
+              <span className="text-sm text-gray-400">
+                Selezionati:{" "}
+                <b className="text-white">
+                  {selectedMembersForPurchase.length}
+                </b>
+              </span>
+              <button
+                onClick={() => setModal({ view: "none" })}
+                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold shadow-lg transition"
+              >
+                CONFERMA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- MODALI STANDARD --- */}
       <CustomModal
         isOpen={modal.view === "confirm_delete_acquisto"}
         title="Elimina Acquisto"
@@ -686,7 +807,7 @@ function App() {
         isOpen={modal.view === "alert"}
         title={modal.data?.title}
         onClose={() => setModal({ view: "none" })}
-        variant={modal.data?.variant || "warning"} // <--- MODIFICA QUI
+        variant={modal.data?.variant || "warning"}
         actions={
           <button
             onClick={() => setModal({ view: "none" })}
@@ -1292,21 +1413,7 @@ function App() {
                   : "bg-gray-900 border-gray-800"
               }`}
             >
-              <div>
-                <label className="text-xs font-bold text-gray-500 block mb-1">
-                  MATRICOLA
-                </label>
-                <input
-                  className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 font-mono focus:border-blue-500 outline-none"
-                  value={newMembro.matricola}
-                  onChange={(e) =>
-                    setNewMembro({
-                      ...newMembro,
-                      matricola: cleanInput(e.target.value),
-                    })
-                  }
-                />
-              </div>
+              {/* RIMOSSO INPUT MATRICOLA */}
               <div>
                 <label className="text-xs font-bold text-gray-500 block mb-1">
                   COGNOME
@@ -1383,7 +1490,7 @@ function App() {
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
                   <tr>
-                    <th className="p-4">Matricola</th>
+                    {/* Rimossa colonna Matricola */}
                     <th className="p-4">Nome</th>
                     <th className="p-4 text-right">Azioni</th>
                   </tr>
@@ -1394,9 +1501,7 @@ function App() {
                       key={m.id}
                       className="border-b border-gray-800 hover:bg-gray-800/50"
                     >
-                      <td className="p-4 font-mono text-blue-300">
-                        {m.matricola}
-                      </td>
+                      {/* Rimossa cella Matricola */}
                       <td className="p-4 font-bold text-white">
                         {m.cognome} {m.nome}
                       </td>
@@ -1437,6 +1542,28 @@ function App() {
                     setNewAcq({ ...newAcq, nome: e.target.value })
                   }
                 />
+
+                {/* SWITCH FONDO CASSA */}
+                <div
+                  className="flex items-center gap-2 mb-2 p-2 bg-gray-800/50 rounded border border-gray-700 cursor-pointer"
+                  onClick={() => setIsFundExpense(!isFundExpense)}
+                >
+                  <div
+                    className={`w-5 h-5 rounded border flex items-center justify-center ${
+                      isFundExpense
+                        ? "bg-green-500 border-green-500"
+                        : "border-gray-500"
+                    }`}
+                  >
+                    {isFundExpense && (
+                      <CheckCircle size={14} className="text-black" />
+                    )}
+                  </div>
+                  <span className="text-sm font-bold text-gray-300 select-none">
+                    Spesa da Fondo Cassa
+                  </span>
+                </div>
+
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1447,16 +1574,33 @@ function App() {
                       setNewAcq({ ...newAcq, prezzo: e.target.value })
                     }
                   />
-                  <input
-                    type="number"
-                    placeholder="Acconto"
-                    className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 focus:border-blue-500 outline-none"
-                    value={newAcq.acconto}
-                    onChange={(e) =>
-                      setNewAcq({ ...newAcq, acconto: e.target.value })
-                    }
-                  />
+                  {!isFundExpense && (
+                    <input
+                      type="number"
+                      placeholder="Acconto"
+                      className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 focus:border-blue-500 outline-none"
+                      value={newAcq.acconto}
+                      onChange={(e) =>
+                        setNewAcq({ ...newAcq, acconto: e.target.value })
+                      }
+                    />
+                  )}
                 </div>
+
+                {!isFundExpense && (
+                  <button
+                    onClick={() => setModal({ view: "select_members" })}
+                    className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 p-3 rounded font-bold transition flex justify-between items-center text-sm"
+                  >
+                    <span>Destinatari:</span>
+                    <span className="text-white bg-gray-900 px-2 py-1 rounded">
+                      {selectedMembersForPurchase.length === 0
+                        ? "TUTTI"
+                        : `${selectedMembersForPurchase.length} Selezionati`}
+                    </span>
+                  </button>
+                )}
+
                 <button
                   onClick={handleSaveAcquisto}
                   className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded font-bold transition"
@@ -1483,6 +1627,11 @@ function App() {
                       <p className="font-bold text-white">{a.nome_acquisto}</p>
                       <p className="text-sm text-gray-400">
                         {formatCurrency(a.prezzo_unitario)}
+                        {a.is_fund_expense === 1 && (
+                          <span className="ml-2 text-xs bg-purple-900 text-purple-300 px-1 rounded">
+                            FONDO
+                          </span>
+                        )}
                       </p>
                     </div>
                     {a.completato ? (
@@ -1494,42 +1643,54 @@ function App() {
                 ))}
               </div>
             </div>
+
+            {/* RIGHT SIDE */}
             <div className="col-span-8 flex flex-col h-full overflow-hidden">
               {selectedAcquisto ? (
                 <div className="bg-gray-900 rounded-2xl border border-gray-800 h-full flex flex-col">
+                  {/* HEADER ACQUISTO */}
                   <div className="p-6 border-b border-gray-800 flex flex-col gap-4 bg-gray-800/50 rounded-t-2xl">
                     <div className="flex justify-between items-start">
                       <div>
                         <h2 className="text-3xl font-bold text-white mb-1">
                           {selectedAcquisto.nome_acquisto}
                         </h2>
-                        <div className="text-sm text-gray-400 flex gap-4 items-center">
-                          <span>
-                            Prezzo Unitario:{" "}
-                            <b className="text-white text-lg">
-                              {formatCurrency(selectedAcquisto.prezzo_unitario)}
-                            </b>
-                          </span>
-                          <span>
-                            Acconto:{" "}
-                            <b className="text-blue-300 text-lg">
-                              {formatCurrency(
-                                selectedAcquisto.acconto_fornitore || 0
-                              )}
-                            </b>
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-xs font-bold ${
-                              selectedAcquisto.completato
-                                ? "bg-green-900 text-green-400"
-                                : "bg-yellow-900 text-yellow-400"
-                            }`}
-                          >
-                            {selectedAcquisto.completato
-                              ? "CONCLUSO"
-                              : "APERTO"}
-                          </span>
-                        </div>
+                        {selectedAcquisto.is_fund_expense === 1 ? (
+                          <div className="text-purple-400 font-bold flex items-center mt-2">
+                            <Wallet className="mr-2" size={18} /> PAGATO DAL
+                            FONDO CASSA
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400 flex gap-4 items-center">
+                            <span>
+                              Prezzo Unitario:{" "}
+                              <b className="text-white text-lg">
+                                {formatCurrency(
+                                  selectedAcquisto.prezzo_unitario
+                                )}
+                              </b>
+                            </span>
+                            <span>
+                              Acconto:{" "}
+                              <b className="text-blue-300 text-lg">
+                                {formatCurrency(
+                                  selectedAcquisto.acconto_fornitore || 0
+                                )}
+                              </b>
+                            </span>
+                            <span
+                              className={`px-2 py-0.5 rounded text-xs font-bold ${
+                                selectedAcquisto.completato
+                                  ? "bg-green-900 text-green-400"
+                                  : "bg-yellow-900 text-yellow-400"
+                              }`}
+                            >
+                              {selectedAcquisto.completato
+                                ? "CONCLUSO"
+                                : "APERTO"}
+                            </span>
+                          </div>
+                        )}
                       </div>
                       {!selectedAcquisto.completato && (
                         <div className="flex gap-2">
@@ -1562,135 +1723,148 @@ function App() {
                         </div>
                       )}
                     </div>
-                    {!selectedAcquisto.completato && (
-                      <div className="flex justify-between items-end border-t border-gray-700 pt-4">
-                        <div className="relative">
-                          <Search
-                            className="absolute left-3 top-2 text-gray-500"
-                            size={16}
-                          />
-                          <input
-                            placeholder="Cerca tra i paganti..."
-                            className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
-                            value={searchQuota}
-                            onChange={(e) => setSearchQuota(e.target.value)}
-                          />
-                        </div>
-                        <div className="flex space-x-2">
-                          <button
-                            onClick={handleExportDebtors}
-                            className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                            title="Scarica Excel di chi non ha pagato"
-                          >
-                            <FileWarning className="mr-2" size={18} /> Morosi
-                          </button>
 
-                          <button
-                            onClick={handleBankExcelUpload}
-                            className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                          >
-                            <FileSpreadsheet className="mr-2" size={18} /> Banca
-                          </button>
-                          <button
-                            onClick={() => {
-                              let d = 0,
-                                v = 0;
-                              quote.forEach((q: any) => {
-                                d +=
-                                  q.quantita * selectedAcquisto.prezzo_unitario;
-                                v += q.importo_versato;
-                              });
-                              setModal({
-                                view: "confirm_purchase",
-                                data: {
-                                  diff: d - v,
-                                  dovuto: d,
-                                  versato: v,
-                                  id: selectedAcquisto.id,
-                                },
-                              });
-                            }}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                          >
-                            <CheckCircle className="mr-2" size={18} /> Concludi
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex-1 overflow-y-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead className="bg-gray-950 text-gray-500 text-xs uppercase sticky top-0">
-                        <tr>
-                          <th className="p-4">Membro</th>
-                          <th className="p-4 text-center">Qtà</th>
-                          <th className="p-4 text-right">Dovuto</th>
-                          <th className="p-4 text-right">Versato</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredQuote.map((q: any) => {
-                          const dov =
-                            q.quantita * selectedAcquisto.prezzo_unitario;
-                          const err =
-                            q.importo_versato < 0 || q.importo_versato > dov;
-                          return (
-                            <tr
-                              key={q.id}
-                              className="border-b border-gray-800 hover:bg-gray-800/30"
+                    {!selectedAcquisto.completato &&
+                      selectedAcquisto.is_fund_expense !== 1 && (
+                        <div className="flex justify-between items-end border-t border-gray-700 pt-4">
+                          <div className="relative">
+                            <Search
+                              className="absolute left-3 top-2 text-gray-500"
+                              size={16}
+                            />
+                            <input
+                              placeholder="Cerca tra i paganti..."
+                              className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
+                              value={searchQuota}
+                              onChange={(e) => setSearchQuota(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={handleExportDebtors}
+                              className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                              title="Scarica Excel di chi non ha pagato"
                             >
-                              <td className="p-4">
-                                <div className="font-bold text-base text-white">
-                                  {q.cognome} {q.nome}
-                                </div>
-                                {q.matricola && (
-                                  <div className="font-mono text-xs text-blue-300">
-                                    {q.matricola}
+                              <FileWarning className="mr-2" size={18} /> Morosi
+                            </button>
+                            <button
+                              onClick={handleBankExcelUpload}
+                              className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                            >
+                              <FileSpreadsheet className="mr-2" size={18} />{" "}
+                              Banca
+                            </button>
+                            <button
+                              onClick={() => {
+                                let d = 0,
+                                  v = 0;
+                                quote.forEach((q: any) => {
+                                  d +=
+                                    q.quantita *
+                                    selectedAcquisto.prezzo_unitario;
+                                  v += q.importo_versato;
+                                });
+                                setModal({
+                                  view: "confirm_purchase",
+                                  data: {
+                                    diff: d - v,
+                                    dovuto: d,
+                                    versato: v,
+                                    id: selectedAcquisto.id,
+                                  },
+                                });
+                              }}
+                              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                            >
+                              <CheckCircle className="mr-2" size={18} />{" "}
+                              Concludi
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto">
+                    {selectedAcquisto.is_fund_expense === 1 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-gray-500">
+                        <CheckSquare size={64} className="mb-4 opacity-20" />
+                        <p>
+                          Questa spesa è stata registrata come uscita diretta
+                          dal Fondo Cassa.
+                        </p>
+                        <p className="text-sm opacity-60">
+                          Nessuna quota da gestire.
+                        </p>
+                      </div>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-950 text-gray-500 text-xs uppercase sticky top-0">
+                          <tr>
+                            <th className="p-4">Membro</th>
+                            <th className="p-4 text-center">Qtà</th>
+                            <th className="p-4 text-right">Dovuto</th>
+                            <th className="p-4 text-right">Versato</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredQuote.map((q: any) => {
+                            const dov =
+                              q.quantita * selectedAcquisto.prezzo_unitario;
+                            const err =
+                              q.importo_versato < 0 || q.importo_versato > dov;
+                            return (
+                              <tr
+                                key={q.id}
+                                className="border-b border-gray-800 hover:bg-gray-800/30"
+                              >
+                                <td className="p-4">
+                                  <div className="font-bold text-base text-white">
+                                    {q.cognome} {q.nome}
                                   </div>
-                                )}
-                              </td>
-                              <td className="p-4 text-center">
-                                <div className="flex justify-center">
-                                  <QuantityControl
-                                    value={q.quantita}
-                                    onChange={(v) =>
-                                      handleUpdateQuotaUser(q, "quantita", v)
-                                    }
+                                </td>
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    <QuantityControl
+                                      value={q.quantita}
+                                      onChange={(v) =>
+                                        handleUpdateQuotaUser(q, "quantita", v)
+                                      }
+                                      disabled={selectedAcquisto.completato}
+                                    />
+                                  </div>
+                                </td>
+                                <td className="p-4 text-right font-mono font-bold text-white">
+                                  {formatCurrency(dov)}
+                                </td>
+                                <td className="p-4 text-right">
+                                  <input
                                     disabled={selectedAcquisto.completato}
+                                    type="number"
+                                    className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${
+                                      err
+                                        ? "border-red-500 text-red-500 focus:border-red-500"
+                                        : "border-gray-700 text-white focus:border-blue-500"
+                                    } ${
+                                      selectedAcquisto.completato
+                                        ? "opacity-50"
+                                        : ""
+                                    }`}
+                                    value={q.importo_versato}
+                                    onChange={(e) =>
+                                      handleUpdateQuotaUser(
+                                        q,
+                                        "importo_versato",
+                                        e.target.value
+                                      )
+                                    }
                                   />
-                                </div>
-                              </td>
-                              <td className="p-4 text-right font-mono font-bold text-white">
-                                {formatCurrency(dov)}
-                              </td>
-                              <td className="p-4 text-right">
-                                <input
-                                  disabled={selectedAcquisto.completato}
-                                  type="number"
-                                  className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${
-                                    err
-                                      ? "border-red-500 text-red-500 focus:border-red-500"
-                                      : "border-gray-700 text-white focus:border-blue-500"
-                                  } ${
-                                    selectedAcquisto.completato
-                                      ? "opacity-50"
-                                      : ""
-                                  }`}
-                                  value={q.importo_versato}
-                                  onChange={(e) =>
-                                    handleUpdateQuotaUser(
-                                      q,
-                                      "importo_versato",
-                                      e.target.value
-                                    )
-                                  }
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
                 </div>
               ) : (

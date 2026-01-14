@@ -1,8 +1,8 @@
 {
   "name": "app-tesoreria",
-  "productionName": "App Tesoreria",
+  "productionName": "Tesoreria",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Software gestionale per tesoreria, gestione membri, acquisti e riconciliazione bancaria.",
   "author": {
     "name": "mata"
@@ -15,7 +15,7 @@
   },
   "build": {
     "appId": "com.tesoreria.app",
-    "productName": "App Tesoreria",
+    "productName": "Tesoreria",
     "directories": {
       "output": "release"
     },

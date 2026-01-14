@@ -1,89 +1,75 @@
-# 💰 Cassiere - Gestore Tesoreria Locale
+# 💰 Tesoreria - Gestore Contabile per Associazioni
 
-Applicazione desktop per la gestione contabile di un'associazione.
-Progettata per garantire integrità dei dati, tracciabilità totale e semplicità d'uso in ambiente locale.
+**Tesoreria** è un'applicazione desktop progettata per semplificare la gestione economica di associazioni, gruppi studenteschi o piccoli enti.
 
-## 🚀 Caratteristiche Chiave
+Dimentica i fogli Excel disordinati e i calcoli manuali: questo software offre un ambiente sicuro, privato e automatizzato per tracciare quote, spese e fondi cassa, garantendo che ogni centesimo sia sempre contabilizzato.
 
-- **100% Locale & Offline:** Nessun cloud, nessun server esterno. I dati vivono sul tuo PC.
-- **Integrità Finanziaria:** Calcoli basati su interi (centesimi) per evitare errori di virgola mobile.
-- **Source of Truth:** Architettura basata su un registro transazioni ("Ledger") immutabile.
-- **Importazione Intelligente:** Parsing di estratti conto PDF con algoritmo di riconciliazione assistita.
-- **Backup Automatico:** Sistema di sicurezza integrato ad ogni avvio.
+## ✨ Perché usare Tesoreria?
 
-## 🛠 Stack Tecnologico
+* **🔒 Privacy Assoluta (100% Offline):** I tuoi dati finanziari non lasciano mai il tuo computer. Nessun cloud, nessun abbonamento, nessun server esterno.
+* **🤖 Riconciliazione Intelligente:** Carica il PDF del tuo estratto conto bancario: il software analizza le transazioni e segna automaticamente chi ha pagato le quote (es. "Tute Sci", "Iscrizione 2025").
+* **🎯 Gestione Progetti:** Crea raccolte fondi specifiche (es. "Merchandising", "Viaggio") e assegna le quote solo ai membri interessati.
+* **🛡️ Sicurezza dei Dati:**
+* Sistema di **Backup Automatico** ad ogni avvio.
+* Calcoli finanziari precisi al centesimo (zero errori di arrotondamento).
 
-- **Runtime:** Electron (Node.js + Chromium)
-- **Linguaggio:** TypeScript (per robustezza e tipizzazione statica)
-- **Frontend:** React + Vite + TailwindCSS
-- **Database:** SQLite3 (tramite `better-sqlite3`)
-- **PDF Engine:** `pdf-parse`
+## 🚀 Come si usa
 
-## 🏗 Architettura del Progetto
+Il flusso di lavoro è pensato per essere lineare e veloce:
 
-Il progetto segue una rigorosa separazione tra processi:
+1. **Gestione Membri:** Importa o inserisci l'anagrafica dei soci.
+2. **Crea un Acquisto:** Definisci una spesa o una raccolta fondi (es. "Felpe 2026 - 35€").
+3. **Assegna Quote:** Seleziona chi deve partecipare alla spesa (tutti i membri o solo un gruppo specifico).
+4. **Registra i Pagamenti:**
 
-1.  **Main Process (Node.js):** Gestisce il database SQLite e le operazioni su file system. È l'unica parte dell'app che può scrivere dati.
-2.  **Renderer Process (React):** Interfaccia utente. Comunica con il Main Process tramite IPC (Inter-Process Communication) sicuro.
+* *Manuale:* Segna i pagamenti in contanti.
+* *Automatico:* Importa l'estratto conto della banca e lascia che il software trovi le corrispondenze.
 
-### Schema Database (SQLite)
+5. **Controlla il Fondo:** Monitora in tempo reale il "Reale" (soldi in banca/cassa) e il "Disponibile" (soldi al netto delle spese impegnate).
 
-Tutti gli importi monetari sono salvati come **INTERI (Centesimi)**.
-Esempio: `10,50€` viene salvato come `1050`.
+## 🛠 Dettagli Tecnici
 
-#### 1. `soci`
+Per gli sviluppatori o i curiosi, ecco come è costruito il progetto. L'architettura è moderna e robusta, basata su standard industriali.
 
-Anagrafica membri.
+**Tech Stack:**
 
-- `id` (PK, UUID)
-- `matricola` (TEXT, UNIQUE) - Chiave primaria per matching PDF
-- `nome`, `cognome` (TEXT)
-- `attivo` (BOOLEAN)
+* **Runtime:** [Electron](https://www.electronjs.org/) (per creare l'app desktop cross-platform).
+* **Frontend:** React + Vite + TailwindCSS (per un'interfaccia veloce e reattiva).
+* **Backend Locale:** Node.js + TypeScript.
+* **Database:** SQLite3 (tramite `better-sqlite3`). I dati risiedono in un file `.db` locale criptabile.
+* **Engine PDF:** `pdf-parse` per l'analisi dei documenti bancari.
 
-#### 2. `progetti_spesa`
-
-Contenitori per raccolte fondi (es. "Felpe 2025").
-
-- `id` (PK, UUID)
-- `nome` (TEXT)
-- `prezzo_unitario` (INTEGER, Cents)
-- `stato` (TEXT): 'APERTO', 'COMPLETATO', 'ARCHIVIATO'
-
-#### 3. `adesioni_progetto`
-
-Tabella di collegamento Socio <-> Progetto.
-
-- `id` (PK, UUID)
-- `quantita` (INTEGER)
-- `importo_dovuto` (INTEGER, Cents)
-
-#### 4. `transazioni` (Ledger)
-
-Il registro contabile unico. La somma di questa tabella è il Saldo Reale.
-
-- `id` (PK, UUID)
-- `data` (TEXT ISO8601)
-- `descrizione` (TEXT)
-- `importo` (INTEGER, Cents): Positivo (Entrata) o Negativo (Uscita)
-- `tipo`: 'INCASSO_QUOTA', 'USCITA_PAGAMENTO', 'GENERICO'
-- `fonte`: 'PDF', 'MANUALE'
+**Nota sull'integrità:** Tutti i calcoli monetari sono eseguiti utilizzando **interi** (in centesimi) per evitare i classici errori di virgola mobile dei linguaggi di programmazione.
 
 ## 📦 Installazione e Sviluppo
 
+Se vuoi contribuire o compilare il software da zero:
+
 ### Prerequisiti
 
-- Node.js (v18 o superiore)
-- npm o yarn
+* Node.js (versione 18 o superiore) installato sul sistema.
 
-### Comandi
+### Comandi Rapidi
+
+1. **Installa le dipendenze:**
 
 ```bash
-# Installazione dipendenze
 npm install
 
-# Avvio in modalità sviluppo (Hot Reload)
+```
+
+1. **Avvia in modalità sviluppo:**
+Apre l'app con hot-reload attivo per modifiche in tempo reale.
+
+```bash
 npm run dev
 
-# Compilazione per produzione (crea eseguibile Windows)
+```
+
+1. **Genera l'eseguibile (Build):**
+Crea il file di installazione (`.exe` su Windows) pronto per la distribuzione nella cartella `release`.
+
+```bash
 npm run build
+
 ```
