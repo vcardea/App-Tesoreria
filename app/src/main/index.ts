@@ -160,6 +160,7 @@ function createMainWindow() {
   ipcMain.handle("delete-membro", (e, id) => deleteMembro(id));
   ipcMain.handle("delete-all-membri", () => deleteAllMembri());
 
+  // NUOVO HANDLER CREATE ACQUISTO (CON TARGET E FONDO)
   ipcMain.handle("create-acquisto", (e, d) =>
     createAcquisto(
       d.nome,
@@ -225,7 +226,7 @@ function createMainWindow() {
     try {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(debtors);
-      // Colonne aggiustate (rimossa Matricola)
+      // Colonne aggiustate
       ws["!cols"] = [
         { wch: 20 },
         { wch: 20 },

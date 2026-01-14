@@ -100,12 +100,12 @@ export function initDB() {
     db = new Database(dbPath);
     db.pragma("journal_mode = WAL");
 
-    // RIMOSSA MATRICOLA DA QUI
     db.exec(
-      `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL);`
+      `CREATE TABLE IF NOT EXISTS membri (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, cognome TEXT NOT NULL, matricola TEXT);`
     );
+    // Aggiunta data_chiusura nella definizione base (per le nuove installazioni)
     db.exec(
-      `CREATE TABLE IF NOT EXISTS acquisti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome_acquisto TEXT NOT NULL, prezzo_unitario REAL NOT NULL, completato BOOLEAN DEFAULT 0, data_creazione DATETIME DEFAULT CURRENT_TIMESTAMP);`
+      `CREATE TABLE IF NOT EXISTS acquisti (id INTEGER PRIMARY KEY AUTOINCREMENT, nome_acquisto TEXT NOT NULL, prezzo_unitario REAL NOT NULL, completato BOOLEAN DEFAULT 0, data_creazione DATETIME DEFAULT CURRENT_TIMESTAMP, data_chiusura DATETIME DEFAULT NULL);`
     );
     db.exec(
       `CREATE TABLE IF NOT EXISTS quote_membri (id INTEGER PRIMARY KEY AUTOINCREMENT, acquisto_id INTEGER NOT NULL, membro_id INTEGER NOT NULL, quantita INTEGER DEFAULT 1, importo_versato REAL DEFAULT 0, FOREIGN KEY (acquisto_id) REFERENCES acquisti(id) ON DELETE CASCADE, FOREIGN KEY (membro_id) REFERENCES membri(id) ON DELETE CASCADE);`
@@ -141,11 +141,22 @@ export function initDB() {
         db.exec(
           "ALTER TABLE acquisti ADD COLUMN is_fund_expense BOOLEAN DEFAULT 0"
         );
-        logSystem("DB", "Colonna is_fund_expense aggiunta");
       }
-    } catch (e) {
-      logSystem("ERROR", "Errore migrazione is_fund_expense", e);
-    }
+    } catch (e) {}
+
+    // MIGRATION 4: Data Chiusura (NUOVA PER VISUALIZZAZIONE MOVIMENTO)
+    try {
+      const tableInfo = db.pragma("table_info(acquisti)") as any[];
+      if (!tableInfo.some((c) => c.name === "data_chiusura")) {
+        db.exec(
+          "ALTER TABLE acquisti ADD COLUMN data_chiusura DATETIME DEFAULT NULL"
+        );
+        // Aggiorna i vecchi chiusi con la data creazione come fallback
+        db.exec(
+          "UPDATE acquisti SET data_chiusura = data_creazione WHERE completato = 1 AND data_chiusura IS NULL"
+        );
+      }
+    } catch (e) {}
 
     return true;
   } catch (error) {
@@ -194,13 +205,38 @@ export function addMovimentoFondo(i: number, d: string) {
     .prepare("INSERT INTO fondo_cassa (importo, descrizione) VALUES (?, ?)")
     .run(i, d);
 }
+
+// AGGIORNATA: Unisce Movimenti manuali + Acquisti completati (solo visualizzazione)
 export function getMovimentiFondo() {
   return db
-    .prepare("SELECT * FROM fondo_cassa ORDER BY data DESC LIMIT 50")
+    .prepare(
+      `
+    SELECT * FROM (
+        SELECT 
+            'F-' || id as unique_id, 
+            importo, 
+            descrizione, 
+            data 
+        FROM fondo_cassa
+        
+        UNION ALL
+        
+        SELECT 
+            'A-' || a.id as unique_id,
+            -(a.prezzo_unitario * (SELECT COALESCE(SUM(quantita),0) FROM quote_membri WHERE acquisto_id = a.id)) as importo,
+            'PAGAMENTO FORNITORE: ' || a.nome_acquisto as descrizione,
+            COALESCE(a.data_chiusura, a.data_creazione) as data
+        FROM acquisti a
+        WHERE a.completato = 1 AND a.is_fund_expense = 0
+    )
+    ORDER BY data DESC
+    LIMIT 100
+  `
+    )
     .all();
 }
 
-// Membri (RIMOSSA MATRICOLA)
+// Membri
 export function getMembri() {
   return db
     .prepare(
@@ -216,24 +252,25 @@ export function addMembro(m: any) {
   if (existing) {
     if (existing.deleted_at) {
       logSystem("DB", `Membro riattivato: ${m.cognome} ${m.nome}`);
-      // Rimossa matricola dall'update
       return db
-        .prepare("UPDATE membri SET deleted_at = NULL WHERE id = ?")
-        .run(existing.id);
+        .prepare(
+          "UPDATE membri SET deleted_at = NULL, matricola = ? WHERE id = ?"
+        )
+        .run(m.matricola || null, existing.id);
     }
     return { changes: 0 };
   }
-  // Rimossa matricola dall'insert
   return db
-    .prepare("INSERT INTO membri (nome, cognome) VALUES (?, ?)")
-    .run(m.nome, m.cognome);
+    .prepare("INSERT INTO membri (nome, cognome, matricola) VALUES (?, ?, ?)")
+    .run(m.nome, m.cognome, m.matricola || null);
 }
 
 export function updateMembro(id: number, m: any) {
-  // Rimossa matricola dall'update
   return db
-    .prepare("UPDATE membri SET nome = ?, cognome = ? WHERE id = ?")
-    .run(m.nome, m.cognome, id);
+    .prepare(
+      "UPDATE membri SET nome = ?, cognome = ?, matricola = ? WHERE id = ?"
+    )
+    .run(m.nome, m.cognome, m.matricola || null, id);
 }
 export function deleteMembro(id: number) {
   return db
@@ -258,13 +295,22 @@ export function createAcquisto(
   isFund: boolean
 ) {
   const trx = db.transaction(() => {
+    // Se è fondo, è subito completato e data chiusura = oggi
     const isCompleted = isFund ? 1 : 0;
+    const dataChiusura = isFund ? new Date().toISOString() : null;
 
     const id = db
       .prepare(
-        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore, is_fund_expense, completato) VALUES (?, ?, ?, ?, ?)"
+        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore, is_fund_expense, completato, data_chiusura) VALUES (?, ?, ?, ?, ?, ?)"
       )
-      .run(n, p, acconto, isFund ? 1 : 0, isCompleted).lastInsertRowid;
+      .run(
+        n,
+        p,
+        acconto,
+        isFund ? 1 : 0,
+        isCompleted,
+        dataChiusura
+      ).lastInsertRowid;
 
     if (isFund) {
       db.prepare(
@@ -310,10 +356,9 @@ export function getAcquisti() {
     .all();
 }
 export function getQuoteAcquisto(id: number) {
-  // RIMOSSA MATRICOLA DALLA SELECT
   return db
     .prepare(
-      `SELECT q.*, m.nome, m.cognome, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
+      `SELECT q.*, m.nome, m.cognome, m.matricola, m.deleted_at FROM quote_membri q JOIN membri m ON q.membro_id = m.id WHERE q.acquisto_id = ? ORDER BY m.cognome ASC`
     )
     .all(id);
 }
@@ -324,6 +369,12 @@ export function updateQuota(id: number, q: number, v: number) {
     )
     .run(q, v, id);
 }
+
+// AGGIORNATO: Registra la data di chiusura
 export function setAcquistoCompletato(id: number) {
-  return db.prepare("UPDATE acquisti SET completato = 1 WHERE id = ?").run(id);
+  return db
+    .prepare(
+      "UPDATE acquisti SET completato = 1, data_chiusura = CURRENT_TIMESTAMP WHERE id = ?"
+    )
+    .run(id);
 }

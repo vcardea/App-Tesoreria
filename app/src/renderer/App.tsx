@@ -35,7 +35,7 @@ interface Quota {
   membro_id: number;
   nome: string;
   cognome: string;
-  // Rimossa matricola
+  matricola: string;
   quantita: number;
   importo_versato: number;
 }
@@ -177,7 +177,7 @@ function App() {
   const [newMembro, setNewMembro] = useState({
     nome: "",
     cognome: "",
-    // Rimossa matricola
+    matricola: "",
   });
   const [editingMembroId, setEditingMembroId] = useState<number | null>(null);
 
@@ -244,10 +244,9 @@ function App() {
     loadData();
   }, []);
 
-  // FILTERS (Rimossa matricola)
   const filteredMembri = useMemo(() => {
     return membri.filter((m) =>
-      (m.nome + " " + m.cognome)
+      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
         .toUpperCase()
         .includes(searchMembri.toUpperCase())
     );
@@ -255,7 +254,7 @@ function App() {
 
   const filteredMembriSelector = useMemo(() => {
     return membri.filter((m) =>
-      (m.nome + " " + m.cognome)
+      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
         .toUpperCase()
         .includes(searchMemberSelector.toUpperCase())
     );
@@ -279,7 +278,7 @@ function App() {
 
   const filteredQuote = useMemo(() => {
     return quote.filter((q) =>
-      (q.nome + " " + q.cognome)
+      (q.nome + " " + q.cognome + " " + q.matricola)
         .toUpperCase()
         .includes(searchQuota.toUpperCase())
     );
@@ -313,18 +312,19 @@ function App() {
     } else {
       await window.api.addMembro(newMembro);
     }
-    setNewMembro({ nome: "", cognome: "" });
+    setNewMembro({ nome: "", cognome: "", matricola: "" });
     loadData();
   };
   const startEditMembro = (m: any) => {
     setNewMembro({
       nome: m.nome,
       cognome: m.cognome,
+      matricola: m.matricola || "",
     });
     setEditingMembroId(m.id);
   };
   const cancelEditMembro = () => {
-    setNewMembro({ nome: "", cognome: "" });
+    setNewMembro({ nome: "", cognome: "", matricola: "" });
     setEditingMembroId(null);
   };
   const handleDeleteMembroRequest = (id: number) => {
@@ -483,7 +483,7 @@ function App() {
       .map((q) => ({
         Cognome: q.cognome,
         Nome: q.nome,
-        // Rimossa matricola
+        Matricola: q.matricola,
         Quantita: q.quantita,
         Dovuto: q.quantita * selectedAcquisto.prezzo_unitario,
         Versato: q.importo_versato,
@@ -665,6 +665,11 @@ function App() {
                   <span className="font-bold">
                     {m.cognome} {m.nome}
                   </span>
+                  {m.matricola && (
+                    <span className="ml-auto text-xs text-gray-500 font-mono">
+                      {m.matricola}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -1222,7 +1227,7 @@ function App() {
                   </h3>
                   <p>
                     Inserisci qui l'anagrafica. Puoi importare massivamente un
-                    file Excel (formato GDF). Se elimini un membro, questo viene
+                    file Excel. Se elimini un membro, questo viene
                     solo "nascosto" per preservare lo storico dei pagamenti
                     precedenti.
                   </p>
@@ -1365,9 +1370,9 @@ function App() {
                 </thead>
                 <tbody>
                   {filteredFondo.map((m: any) => (
-                    <tr key={m.id} className="border-b border-gray-800">
+                    <tr key={m.unique_id} className="border-b border-gray-800">
                       <td className="p-4 text-gray-400">
-                        {m.data.split(" ")[0]}
+                        {new Date(m.data).toLocaleDateString()}
                       </td>
                       <td className="p-4">{m.descrizione}</td>
                       <td
@@ -1413,7 +1418,21 @@ function App() {
                   : "bg-gray-900 border-gray-800"
               }`}
             >
-              {/* RIMOSSO INPUT MATRICOLA */}
+              <div>
+                <label className="text-xs font-bold text-gray-500 block mb-1">
+                  MATRICOLA
+                </label>
+                <input
+                  className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 font-mono focus:border-blue-500 outline-none"
+                  value={newMembro.matricola}
+                  onChange={(e) =>
+                    setNewMembro({
+                      ...newMembro,
+                      matricola: cleanInput(e.target.value),
+                    })
+                  }
+                />
+              </div>
               <div>
                 <label className="text-xs font-bold text-gray-500 block mb-1">
                   COGNOME
@@ -1490,7 +1509,7 @@ function App() {
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
                   <tr>
-                    {/* Rimossa colonna Matricola */}
+                    <th className="p-4">Matricola</th>
                     <th className="p-4">Nome</th>
                     <th className="p-4 text-right">Azioni</th>
                   </tr>
@@ -1501,7 +1520,9 @@ function App() {
                       key={m.id}
                       className="border-b border-gray-800 hover:bg-gray-800/50"
                     >
-                      {/* Rimossa cella Matricola */}
+                      <td className="p-4 font-mono text-blue-300">
+                        {m.matricola}
+                      </td>
                       <td className="p-4 font-bold text-white">
                         {m.cognome} {m.nome}
                       </td>
@@ -1655,6 +1676,26 @@ function App() {
                         <h2 className="text-3xl font-bold text-white mb-1">
                           {selectedAcquisto.nome_acquisto}
                         </h2>
+
+                        {/* --- VISUALIZZAZIONE DATA --- */}
+                        <div className="text-xs text-gray-500 mb-2 font-mono flex items-center">
+                          <CalendarDays size={12} className="mr-1" />
+                          Data Creazione:{" "}
+                          {new Date(
+                            selectedAcquisto.data_creazione
+                          ).toLocaleDateString()}
+                          {selectedAcquisto.completato &&
+                            selectedAcquisto.data_chiusura && (
+                              <span className="ml-3 text-green-600 flex items-center">
+                                <CheckCircle size={12} className="mr-1" />{" "}
+                                Chiuso il:{" "}
+                                {new Date(
+                                  selectedAcquisto.data_chiusura
+                                ).toLocaleDateString()}
+                              </span>
+                            )}
+                        </div>
+
                         {selectedAcquisto.is_fund_expense === 1 ? (
                           <div className="text-purple-400 font-bold flex items-center mt-2">
                             <Wallet className="mr-2" size={18} /> PAGATO DAL
@@ -1821,6 +1862,11 @@ function App() {
                                   <div className="font-bold text-base text-white">
                                     {q.cognome} {q.nome}
                                   </div>
+                                  {q.matricola && (
+                                    <div className="font-mono text-xs text-blue-300">
+                                      {q.matricola}
+                                    </div>
+                                  )}
                                 </td>
                                 <td className="p-4 text-center">
                                   <div className="flex justify-center">
