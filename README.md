@@ -1,4 +1,4 @@
-# 💰 Cassiere - Gestore Tesoreria Locale
+# 💰 Gestore Tesoreria Locale
 
 Applicazione desktop per la gestione contabile di un'associazione.
 Progettata per garantire integrità dei dati, tracciabilità totale e semplicità d'uso in ambiente locale.
