@@ -28,6 +28,9 @@ import {
   Minus,
   Plus,
   CheckSquare,
+  PiggyBank,
+  Unlock,
+  Lock,
 } from "lucide-react";
 
 interface Quota {
@@ -52,7 +55,6 @@ const formatCurrency = (amount: number) =>
 const cleanInput = (val: string) =>
   val.toUpperCase().replace(/[^A-Z0-9À-ÖØ-öø-ÿ' ]/g, "");
 
-// --- COMPONENTS ---
 const QuantityControl = ({
   value,
   onChange,
@@ -61,33 +63,31 @@ const QuantityControl = ({
   value: number;
   onChange: (newVal: number) => void;
   disabled?: boolean;
-}) => {
-  return (
-    <div
-      className={`flex items-center bg-gray-950 border border-gray-600 rounded-lg overflow-hidden w-40 h-10 shadow-lg ${
-        disabled ? "opacity-50 pointer-events-none" : ""
-      }`}
+}) => (
+  <div
+    className={`flex items-center bg-gray-950 border border-gray-600 rounded-lg overflow-hidden w-40 h-10 shadow-lg ${
+      disabled ? "opacity-50 pointer-events-none" : ""
+    }`}
+  >
+    <button
+      onClick={() => value > 1 && onChange(value - 1)}
+      className="h-full px-4 bg-gray-800 hover:bg-red-900/50 text-white border-r border-gray-600 transition active:bg-gray-700 flex items-center justify-center"
+      type="button"
     >
-      <button
-        onClick={() => value > 1 && onChange(value - 1)}
-        className="h-full px-4 bg-gray-800 hover:bg-red-900/50 text-white border-r border-gray-600 transition active:bg-gray-700 flex items-center justify-center"
-        type="button"
-      >
-        <Minus size={20} className="font-bold" />
-      </button>
-      <div className="flex-1 text-center font-bold text-white text-xl bg-black/40 h-full flex items-center justify-center">
-        {value}
-      </div>
-      <button
-        onClick={() => onChange(value + 1)}
-        className="h-full px-4 bg-gray-800 hover:bg-green-900/50 text-white border-l border-gray-600 transition active:bg-gray-700 flex items-center justify-center"
-        type="button"
-      >
-        <Plus size={20} className="font-bold" />
-      </button>
+      <Minus size={20} />
+    </button>
+    <div className="flex-1 text-center font-bold text-white text-xl bg-black/40 h-full flex items-center justify-center">
+      {value}
     </div>
-  );
-};
+    <button
+      onClick={() => onChange(value + 1)}
+      className="h-full px-4 bg-gray-800 hover:bg-green-900/50 text-white border-l border-gray-600 transition active:bg-gray-700 flex items-center justify-center"
+      type="button"
+    >
+      <Plus size={20} />
+    </button>
+  </div>
+);
 
 const CustomModal = ({
   isOpen,
@@ -124,7 +124,7 @@ const CustomModal = ({
       icon: <AlertCircle className="mr-2" size={24} />,
     },
   };
-  const s = styles[variant as keyof typeof styles] || styles.neutral;
+  const s = (styles as any)[variant] || styles.neutral;
   return (
     <div className="absolute inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
       <div
@@ -139,7 +139,7 @@ const CustomModal = ({
           </h3>
           <button
             onClick={onClose}
-            className="p-1 rounded-full hover:bg-black/20 text-white/70 hover:text-white transition"
+            className="p-1 rounded-full hover:bg-black/20 text-white/70 hover:text-white"
           >
             <X size={20} />
           </button>
@@ -172,61 +172,45 @@ function App() {
   const [quote, setQuote] = useState<Quota[]>([]);
   const [movimentiFondo, setMovimentiFondo] = useState<any[]>([]);
   const [backups, setBackups] = useState([]);
-
   const [isLoading, setIsLoading] = useState(false);
+
   const [newMembro, setNewMembro] = useState({
     nome: "",
     cognome: "",
     matricola: "",
   });
   const [editingMembroId, setEditingMembroId] = useState<number | null>(null);
+  const [searchMembri, setSearchMembri] = useState("");
 
+  const [newAcqType, setNewAcqType] = useState("acquisto");
   const [newAcq, setNewAcq] = useState({ nome: "", prezzo: "", acconto: "" });
-  const [isFundExpense, setIsFundExpense] = useState(false);
   const [selectedMembersForPurchase, setSelectedMembersForPurchase] = useState<
     number[]
   >([]);
+  const [editingMemberSelection, setEditingMemberSelection] = useState<
+    number[]
+  >([]);
 
-  const [editingAcq, setEditingAcq] = useState<{
-    id: number;
-    nome: string;
-    prezzo: string;
-    acconto: string;
-  } | null>(null);
+  const [editingAcq, setEditingAcq] = useState<any>(null);
   const [newMovimentoFondo, setNewMovimentoFondo] = useState({
     importo: "",
     descrizione: "",
   });
+  const [isEditingQuotes, setIsEditingQuotes] = useState(false);
 
-  const [searchMembri, setSearchMembri] = useState("");
   const [searchFondo, setSearchFondo] = useState("");
   const [filterDateStart, setFilterDateStart] = useState("");
   const [filterDateEnd, setFilterDateEnd] = useState("");
   const [searchQuota, setSearchQuota] = useState("");
-  const [searchExcel, setSearchExcel] = useState("");
   const [searchMemberSelector, setSearchMemberSelector] = useState("");
-
+  const [searchExcel, setSearchExcel] = useState("");
   const [excelDateStart, setExcelDateStart] = useState("");
   const [excelDateEnd, setExcelDateEnd] = useState("");
-
   const [excelMatches, setExcelMatches] = useState<any[]>([]);
   const [selectedMatches, setSelectedMatches] = useState<number[]>([]);
-
-  const [modal, setModal] = useState<{
-    view:
-      | "none"
-      | "excel_bank"
-      | "fondo"
-      | "confirm_delete_acquisto"
-      | "confirm_delete_membro"
-      | "confirm_delete_ALL_membri"
-      | "confirm_purchase"
-      | "confirm_restore"
-      | "alert"
-      | "edit_acquisto"
-      | "select_members";
-    data?: any;
-  }>({ view: "none" });
+  const [modal, setModal] = useState<{ view: string; data?: any }>({
+    view: "none",
+  });
 
   const loadData = async () => {
     try {
@@ -236,83 +220,204 @@ function App() {
       setMovimentiFondo(await window.api.getMovimentiFondo());
       setBackups(await window.api.getBackups());
     } catch (e) {
-      console.error("Errore caricamento dati:", e);
+      console.error(e);
     }
   };
-
   useEffect(() => {
     loadData();
   }, []);
 
-  const filteredMembri = useMemo(() => {
-    return membri.filter((m) =>
-      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
-        .toUpperCase()
-        .includes(searchMembri.toUpperCase())
-    );
-  }, [membri, searchMembri]);
-
-  const filteredMembriSelector = useMemo(() => {
-    return membri.filter((m) =>
-      (m.nome + " " + m.cognome + " " + (m.matricola || ""))
-        .toUpperCase()
-        .includes(searchMemberSelector.toUpperCase())
-    );
-  }, [membri, searchMemberSelector]);
-
-  const filteredFondo = useMemo(() => {
-    return movimentiFondo.filter((m) => {
-      const matchText = m.descrizione
-        .toUpperCase()
-        .includes(searchFondo.toUpperCase());
-      if (!matchText) return false;
-      if (filterDateStart || filterDateEnd) {
-        const mDate = new Date(m.data);
-        mDate.setHours(0, 0, 0, 0);
-        if (filterDateStart && mDate < new Date(filterDateStart)) return false;
-        if (filterDateEnd && mDate > new Date(filterDateEnd)) return false;
-      }
-      return true;
-    });
-  }, [movimentiFondo, searchFondo, filterDateStart, filterDateEnd]);
-
-  const filteredQuote = useMemo(() => {
-    return quote.filter((q) =>
-      (q.nome + " " + q.cognome + " " + q.matricola)
-        .toUpperCase()
-        .includes(searchQuota.toUpperCase())
-    );
-  }, [quote, searchQuota]);
-
-  const filteredExcelMatches = useMemo(() => {
-    return excelMatches
-      .map((m, i) => ({ ...m, originalIndex: i }))
-      .filter((m) => {
-        const textMatch =
-          m.nome_trovato.toUpperCase().includes(searchExcel.toUpperCase()) ||
-          m.linea_originale.toUpperCase().includes(searchExcel.toUpperCase());
-        if (!textMatch) return false;
-        if (m.data_movimento && (excelDateStart || excelDateEnd)) {
-          const mDate = new Date(m.data_movimento);
+  const filteredMembri = useMemo(
+    () =>
+      membri.filter((m) =>
+        (m.nome + " " + m.cognome + " " + (m.matricola || ""))
+          .toUpperCase()
+          .includes(searchMembri.toUpperCase())
+      ),
+    [membri, searchMembri]
+  );
+  const filteredMembriSelector = useMemo(
+    () =>
+      membri.filter((m) =>
+        (m.nome + " " + m.cognome + " " + (m.matricola || ""))
+          .toUpperCase()
+          .includes(searchMemberSelector.toUpperCase())
+      ),
+    [membri, searchMemberSelector]
+  );
+  const filteredQuote = useMemo(
+    () =>
+      quote.filter((q) =>
+        (q.nome + " " + q.cognome + " " + q.matricola)
+          .toUpperCase()
+          .includes(searchQuota.toUpperCase())
+      ),
+    [quote, searchQuota]
+  );
+  const filteredFondo = useMemo(
+    () =>
+      movimentiFondo.filter((m) => {
+        const matchText = m.descrizione
+          .toUpperCase()
+          .includes(searchFondo.toUpperCase());
+        if (!matchText) return false;
+        if (filterDateStart || filterDateEnd) {
+          const mDate = new Date(m.data);
           mDate.setHours(0, 0, 0, 0);
-          if (excelDateStart && mDate < new Date(excelDateStart)) return false;
-          if (excelDateEnd && mDate > new Date(excelDateEnd)) return false;
+          if (filterDateStart && mDate < new Date(filterDateStart))
+            return false;
+          if (filterDateEnd && mDate > new Date(filterDateEnd)) return false;
         }
         return true;
-      });
-  }, [excelMatches, searchExcel, excelDateStart, excelDateEnd]);
+      }),
+    [movimentiFondo, searchFondo, filterDateStart, filterDateEnd]
+  );
+  const filteredExcelMatches = useMemo(
+    () =>
+      excelMatches
+        .map((m, i) => ({ ...m, originalIndex: i }))
+        .filter((m) => {
+          const textMatch =
+            m.nome_trovato.toUpperCase().includes(searchExcel.toUpperCase()) ||
+            m.linea_originale.toUpperCase().includes(searchExcel.toUpperCase());
+          if (!textMatch) return false;
+          if (m.data_movimento && (excelDateStart || excelDateEnd)) {
+            const mDate = new Date(m.data_movimento);
+            mDate.setHours(0, 0, 0, 0);
+            if (excelDateStart && mDate < new Date(excelDateStart))
+              return false;
+            if (excelDateEnd && mDate > new Date(excelDateEnd)) return false;
+          }
+          return true;
+        }),
+    [excelMatches, searchExcel, excelDateStart, excelDateEnd]
+  );
 
-  // ACTIONS
   const handleSaveMembro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMembro.nome || !newMembro.cognome) return;
-    if (editingMembroId) {
+    if (editingMembroId)
       await window.api.updateMembro(editingMembroId, newMembro);
-      setEditingMembroId(null);
-    } else {
-      await window.api.addMembro(newMembro);
-    }
+    else await window.api.addMembro(newMembro);
     setNewMembro({ nome: "", cognome: "", matricola: "" });
+    setEditingMembroId(null);
+    loadData();
+  };
+
+  const handleSaveAcquisto = async () => {
+    if (!newAcq.nome || !newAcq.prezzo) return;
+    const p = parseFloat(newAcq.prezzo);
+    const a = newAcq.acconto ? parseFloat(newAcq.acconto) : 0;
+    if (p < 0 || a < 0) {
+      setModal({
+        view: "alert",
+        data: { title: "Errore Valori", msg: "No negativi." },
+      });
+      return;
+    }
+    let targetIds: number[] | null = null;
+    if (newAcqType !== "spesa_fondo" && selectedMembersForPurchase.length > 0)
+      targetIds = selectedMembersForPurchase;
+    await window.api.createAcquisto({
+      nome: newAcq.nome,
+      prezzo: p,
+      acconto: newAcqType === "spesa_fondo" ? 0 : a,
+      targetMemberIds: targetIds,
+      tipo: newAcqType,
+    });
+    setNewAcq({ nome: "", prezzo: "", acconto: "" });
+    setSelectedMembersForPurchase([]);
+    loadData();
+  };
+
+  const startEditAcquistoLogic = async () => {
+    // 1. Recupera le quote attuali dal DB
+    const q = await window.api.getQuote(selectedAcquisto.id);
+    // 2. Estrae gli ID dei membri
+    const currentMemberIds = q.map((i: any) => i.membro_id);
+    // 3. Imposta lo stato per il modale
+    setEditingMemberSelection(currentMemberIds);
+    setEditingAcq({
+      id: selectedAcquisto.id,
+      nome: selectedAcquisto.nome_acquisto,
+      prezzo: String(selectedAcquisto.prezzo_unitario),
+      acconto: String(selectedAcquisto.acconto_fornitore || 0),
+    });
+    setModal({ view: "edit_acquisto" });
+  };
+
+  const handleUpdateAcquisto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAcq) return;
+    await window.api.updateAcquisto({
+      id: editingAcq.id,
+      nome: editingAcq.nome,
+      prezzo: parseFloat(editingAcq.prezzo),
+      acconto: parseFloat(editingAcq.acconto || 0),
+      targetMemberIds: editingMemberSelection,
+    });
+    setModal({ view: "none" });
+    if (selectedAcquisto && selectedAcquisto.id === editingAcq.id) {
+      const updatedList = await window.api.getAcquisti();
+      const newItem = updatedList.find((a: any) => a.id === editingAcq.id);
+      setSelectedAcquisto(newItem);
+      setQuote(await window.api.getQuote(newItem.id));
+    }
+    loadData();
+  };
+
+  const handleUpdateQuotaUser = async (
+    q: Quota,
+    field: string,
+    val: string | number
+  ) => {
+    let v = typeof val === "string" ? parseFloat(val) : val;
+    if (isNaN(v) || v < 0) return;
+    const newQta = field === "quantita" ? v : q.quantita;
+    const newVersato = field === "importo_versato" ? v : q.importo_versato;
+    await window.api.updateQuota({
+      id: q.id,
+      qta: newQta,
+      versato: newVersato,
+    });
+    setQuote(await window.api.getQuote(selectedAcquisto.id));
+    setSituazione(await window.api.getSituazione());
+  };
+
+  const requestRestoreBackup = (filename: string) =>
+    setModal({ view: "confirm_restore", data: { filename } });
+  const confirmRestoreBackup = async () => {
+    if (!modal.data?.filename) return;
+    setIsLoading(true);
+    const success = await window.api.restoreBackup(modal.data.filename);
+    if (success) {
+      setModal({ view: "none" });
+    } else {
+      setModal({
+        view: "alert",
+        data: { title: "Errore", msg: "Ripristino fallito." },
+      });
+      setIsLoading(false);
+    }
+  };
+
+  const confirmDeleteAcquisto = async () => {
+    await window.api.deleteAcquisto(modal.data.id);
+    if (selectedAcquisto && selectedAcquisto.id === modal.data.id)
+      setSelectedAcquisto(null);
+    setModal({ view: "none" });
+    loadData();
+  };
+  const handleDeleteALLMembriRequest = () =>
+    setModal({ view: "confirm_delete_ALL_membri" });
+  const confirmDeleteALLMembri = async () => {
+    await window.api.deleteAllMembri();
+    setModal({ view: "none" });
+    loadData();
+  };
+  const confirmDeleteMembro = async () => {
+    await window.api.deleteMembro(modal.data.id);
+    setModal({ view: "none" });
     loadData();
   };
   const startEditMembro = (m: any) => {
@@ -327,234 +432,14 @@ function App() {
     setNewMembro({ nome: "", cognome: "", matricola: "" });
     setEditingMembroId(null);
   };
-  const handleDeleteMembroRequest = (id: number) => {
-    setModal({ view: "confirm_delete_membro", data: { id } });
-  };
-  const confirmDeleteMembro = async () => {
-    if (!modal.data?.id) return;
-    await window.api.deleteMembro(modal.data.id);
-    setModal({ view: "none" });
-    loadData();
-  };
-  const handleDeleteALLMembriRequest = () => {
-    setModal({ view: "confirm_delete_ALL_membri" });
-  };
-  const confirmDeleteALLMembri = async () => {
-    await window.api.deleteAllMembri();
-    setModal({ view: "none" });
-    loadData();
-  };
-  const handleImportMembriExcel = async () => {
-    const path = await window.api.selectFile();
-    if (!path) return;
-    setIsLoading(true);
-    try {
-      const count = await window.api.importMembriExcel(path);
-      setModal({
-        view: "alert",
-        data: {
-          title: "Importazione Completata",
-          msg: `Aggiunti (o riattivati) ${count} membri.`,
-        },
-      });
-      loadData();
-    } catch (e: any) {
-      setModal({
-        view: "alert",
-        data: { title: "Errore Importazione", msg: e.message },
-      });
-    } finally {
-      setIsLoading(false);
-    }
+
+  const selectAcquistoAndReset = async (a: any) => {
+    setSelectedAcquisto(a);
+    setQuote(await window.api.getQuote(a.id));
+    setIsEditingQuotes(false);
+    setSearchQuota("");
   };
 
-  // --- ACQUISTI ---
-  const handleSaveAcquisto = async () => {
-    if (!newAcq.nome || !newAcq.prezzo) return;
-    const p = parseFloat(newAcq.prezzo);
-    const a = newAcq.acconto ? parseFloat(newAcq.acconto) : 0;
-
-    if (p < 0 || a < 0) {
-      setModal({
-        view: "alert",
-        data: {
-          title: "Errore Valori",
-          msg: "Prezzo e acconto non possono essere negativi.",
-        },
-      });
-      return;
-    }
-
-    let targetIds: number[] | null = null;
-    if (!isFundExpense && selectedMembersForPurchase.length > 0) {
-      targetIds = selectedMembersForPurchase;
-    }
-
-    await window.api.createAcquisto({
-      nome: newAcq.nome,
-      prezzo: p,
-      acconto: isFundExpense ? 0 : a,
-      targetMemberIds: targetIds,
-      isFundExpense: isFundExpense,
-    });
-
-    setNewAcq({ nome: "", prezzo: "", acconto: "" });
-    setIsFundExpense(false);
-    setSelectedMembersForPurchase([]);
-    loadData();
-  };
-
-  const toggleMemberSelection = (id: number) => {
-    setSelectedMembersForPurchase((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    );
-  };
-
-  const selectAllMembers = () => {
-    if (selectedMembersForPurchase.length === membri.length) {
-      setSelectedMembersForPurchase([]);
-    } else {
-      setSelectedMembersForPurchase(membri.map((m) => m.id));
-    }
-  };
-
-  const handleUpdateAcquisto = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingAcq) return;
-    const p = parseFloat(editingAcq.prezzo);
-    const a = editingAcq.acconto ? parseFloat(editingAcq.acconto) : 0;
-    if (p < 0 || a < 0) {
-      alert("Valori negativi non ammessi");
-      return;
-    }
-    await window.api.updateAcquisto({
-      id: editingAcq.id,
-      nome: editingAcq.nome,
-      prezzo: p,
-      acconto: a,
-    });
-    setModal({ view: "none" });
-    if (selectedAcquisto && selectedAcquisto.id === editingAcq.id) {
-      const updatedList = await window.api.getAcquisti();
-      setSelectedAcquisto(updatedList.find((a: any) => a.id === editingAcq.id));
-    }
-    loadData();
-  };
-  const handleDeleteAcquistoRequest = (id: number) => {
-    setModal({ view: "confirm_delete_acquisto", data: { id } });
-  };
-  const confirmDeleteAcquisto = async () => {
-    if (!modal.data?.id) return;
-    await window.api.deleteAcquisto(modal.data.id);
-    if (selectedAcquisto && selectedAcquisto.id === modal.data.id)
-      setSelectedAcquisto(null);
-    setModal({ view: "none" });
-    loadData();
-  };
-
-  const handleUpdateQuotaUser = async (
-    q: Quota,
-    field: "importo_versato" | "quantita",
-    val: string | number
-  ) => {
-    let v = typeof val === "string" ? parseFloat(val) : val;
-    if (isNaN(v) || v < 0) return;
-
-    const newQta = field === "quantita" ? v : q.quantita;
-    const newVersato = field === "importo_versato" ? v : q.importo_versato;
-
-    await window.api.updateQuota({
-      id: q.id,
-      qta: newQta,
-      versato: newVersato,
-    });
-    const newQuotes = await window.api.getQuote(selectedAcquisto.id);
-    setQuote(newQuotes);
-    setSituazione(await window.api.getSituazione());
-  };
-
-  const handleExportDebtors = async () => {
-    if (!selectedAcquisto) return;
-
-    const debtors = quote
-      .filter(
-        (q) => q.importo_versato < q.quantita * selectedAcquisto.prezzo_unitario
-      )
-      .map((q) => ({
-        Cognome: q.cognome,
-        Nome: q.nome,
-        Matricola: q.matricola,
-        Quantita: q.quantita,
-        Dovuto: q.quantita * selectedAcquisto.prezzo_unitario,
-        Versato: q.importo_versato,
-        Da_Pagare:
-          q.quantita * selectedAcquisto.prezzo_unitario - q.importo_versato,
-      }));
-
-    if (debtors.length === 0) {
-      setModal({
-        view: "alert",
-        data: {
-          title: "Ottimo!",
-          msg: "Tutti hanno saldato il dovuto per questo acquisto!",
-          variant: "success",
-        },
-      });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const success = await window.api.exportDebtors({
-        acquistoNome: selectedAcquisto.nome_acquisto,
-        debtors,
-      });
-
-      if (success) {
-        setModal({
-          view: "alert",
-          data: {
-            title: "Esportazione Completata",
-            msg: "Il file Excel dei morosi è stato salvato con successo.",
-            variant: "success",
-          },
-        });
-      }
-    } catch (e: any) {
-      setModal({
-        view: "alert",
-        data: { title: "Errore Export", msg: e.message, variant: "danger" },
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleBankExcelUpload = async () => {
-    const path = await window.api.selectFile();
-    if (!path) return;
-    setIsLoading(true);
-    try {
-      const matches = await window.api.analyzeExcelBank(path);
-      if (matches.length === 0) {
-        setModal({
-          view: "alert",
-          data: { title: "Nessun Risultato", msg: "Nessun pagamento trovato." },
-        });
-        return;
-      }
-      setExcelMatches(matches);
-      setSelectedMatches(matches.map((_: any, i: number) => i));
-      setSearchExcel("");
-      setExcelDateStart("");
-      setExcelDateEnd("");
-      setModal({ view: "excel_bank" });
-    } catch (e: any) {
-      setModal({ view: "alert", data: { title: "Errore", msg: e.message } });
-    } finally {
-      setIsLoading(false);
-    }
-  };
   const confirmImportBank = async () => {
     setIsLoading(true);
     try {
@@ -569,265 +454,179 @@ function App() {
           });
       }
       setModal({ view: "none" });
-      const qUpdated = await window.api.getQuote(selectedAcquisto.id);
-      setQuote(qUpdated);
+      setQuote(await window.api.getQuote(selectedAcquisto.id));
       loadData();
     } finally {
       setIsLoading(false);
     }
   };
 
-  const requestRestoreBackup = (filename: string) => {
-    setModal({ view: "confirm_restore", data: { filename } });
-  };
-  const confirmRestoreBackup = async () => {
-    if (!modal.data?.filename) return;
+  const handleBankExcelUpload = async () => {
+    const path = await window.api.selectFile();
+    if (!path) return;
     setIsLoading(true);
-    setTimeout(async () => {
-      const success = await window.api.restoreBackup(modal.data.filename);
-      if (!success) {
-        setIsLoading(false);
-        setModal({
-          view: "alert",
-          data: { title: "Errore", msg: "Ripristino fallito. Vedi log." },
-        });
-      }
-    }, 500);
+    try {
+      const matches = await window.api.analyzeExcelBank(path);
+      setExcelMatches(matches);
+      setSelectedMatches(matches.map((_: any, i: any) => i));
+      setModal({ view: "excel_bank" });
+    } catch (e: any) {
+      setModal({ view: "alert", data: { title: "Errore", msg: e.message } });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleImportMembriExcel = async () => {
+    const path = await window.api.selectFile();
+    if (!path) return;
+    setIsLoading(true);
+    try {
+      const count = await window.api.importMembriExcel(path);
+      setModal({
+        view: "alert",
+        data: {
+          title: "Importazione Completata",
+          msg: `Aggiunti ${count} membri.`,
+        },
+      });
+      loadData();
+    } catch (e: any) {
+      setModal({ view: "alert", data: { title: "Errore", msg: e.message } });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const selectAllMembers = () => {
+    setSelectedMembersForPurchase(
+      selectedMembersForPurchase.length === membri.length
+        ? []
+        : membri.map((m) => m.id)
+    );
+  };
+  const toggleMemberSelection = (id: number) => {
+    setSelectedMembersForPurchase((prev) =>
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
+    );
   };
 
   return (
     <div className="flex h-screen bg-gray-950 text-white font-sans overflow-hidden relative">
       {isLoading && (
-        <div className="absolute inset-0 bg-black/80 z-[60] flex flex-col items-center justify-center backdrop-blur-sm animate-in fade-in duration-300">
-          <Loader2 className="animate-spin text-blue-500 mb-4" size={64} />
-          <p className="text-xl font-bold text-white animate-pulse">
-            Elaborazione in corso...
-          </p>
+        <div className="absolute inset-0 bg-black/80 z-[60] flex flex-col items-center justify-center">
+          <Loader2 className="animate-spin text-blue-500" size={64} />
         </div>
       )}
 
       {/* --- MODALE SELEZIONE MEMBRI --- */}
       {modal.view === "select_members" && (
-        <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+        <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className="bg-gray-900 w-full max-w-2xl h-[80vh] rounded-2xl border border-gray-700 flex flex-col shadow-2xl">
-            <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-2xl">
+            <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-800">
               <h3 className="font-bold text-xl flex items-center">
                 <ListChecks className="mr-2" /> Seleziona Destinatari
               </h3>
-              <button onClick={() => setModal({ view: "none" })}>
+              <button
+                onClick={() =>
+                  setModal({ view: editingAcq ? "edit_acquisto" : "none" })
+                }
+              >
                 <X />
               </button>
             </div>
-            <div className="p-4 bg-gray-800/50 flex gap-2 border-b border-gray-700">
-              <button
-                onClick={selectAllMembers}
-                className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs font-bold transition"
-              >
-                {selectedMembersForPurchase.length === membri.length
-                  ? "DESELEZIONA TUTTI"
-                  : "SELEZIONA TUTTI"}
-              </button>
-              <div className="relative flex-1">
-                <Search
-                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"
-                  size={16}
-                />
-                <input
-                  className="bg-black border border-gray-600 rounded-full px-10 py-2 text-sm w-full focus:border-blue-500 outline-none"
-                  placeholder="Cerca nome per selezionare..."
-                  value={searchMemberSelector}
-                  onChange={(e) => setSearchMemberSelector(e.target.value)}
-                />
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-1">
-              {filteredMembriSelector.map((m) => (
-                <div
-                  key={m.id}
-                  onClick={() => toggleMemberSelection(m.id)}
-                  className={`flex items-center p-3 rounded cursor-pointer border transition ${
-                    selectedMembersForPurchase.includes(m.id)
-                      ? "bg-blue-900/40 border-blue-500"
-                      : "bg-gray-800 border-transparent hover:bg-gray-700"
-                  }`}
-                >
-                  <div
-                    className={`w-5 h-5 rounded border mr-3 flex items-center justify-center transition ${
-                      selectedMembersForPurchase.includes(m.id)
-                        ? "bg-blue-500 border-blue-500"
-                        : "border-gray-500"
-                    }`}
-                  >
-                    {selectedMembersForPurchase.includes(m.id) && (
-                      <CheckCircle size={14} className="text-white" />
-                    )}
+
+            {(() => {
+              const isEdit = modal.data?.context === "edit";
+              const list = isEdit
+                ? editingMemberSelection
+                : selectedMembersForPurchase;
+              const setList = isEdit
+                ? setEditingMemberSelection
+                : setSelectedMembersForPurchase;
+
+              return (
+                <>
+                  <div className="p-4 bg-gray-800/50 flex gap-2 border-b border-gray-700">
+                    <button
+                      onClick={() =>
+                        setList(
+                          list.length === membri.length
+                            ? []
+                            : membri.map((m) => m.id)
+                        )
+                      }
+                      className="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-xs font-bold"
+                    >
+                      {list.length === membri.length
+                        ? "DESELEZIONA TUTTI"
+                        : "SELEZIONA TUTTI"}
+                    </button>
+                    <input
+                      className="bg-black border border-gray-600 rounded-full px-10 py-2 text-sm w-full outline-none"
+                      placeholder="Cerca..."
+                      value={searchMemberSelector}
+                      onChange={(e) => setSearchMemberSelector(e.target.value)}
+                    />
                   </div>
-                  <span className="font-bold">
-                    {m.cognome} {m.nome}
-                  </span>
-                  {m.matricola && (
-                    <span className="ml-auto text-xs text-gray-500 font-mono">
-                      {m.matricola}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-1">
+                    {filteredMembriSelector.map((m) => (
+                      <div
+                        key={m.id}
+                        onClick={() =>
+                          setList((prev) =>
+                            prev.includes(m.id)
+                              ? prev.filter((x) => x !== m.id)
+                              : [...prev, m.id]
+                          )
+                        }
+                        className={`flex items-center p-3 rounded cursor-pointer border transition ${
+                          list.includes(m.id)
+                            ? "bg-blue-900/40 border-blue-500"
+                            : "bg-gray-800 border-transparent hover:bg-gray-700"
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded border mr-3 flex items-center justify-center ${
+                            list.includes(m.id)
+                              ? "bg-blue-500 border-blue-500"
+                              : "border-gray-500"
+                          }`}
+                        >
+                          {list.includes(m.id) && (
+                            <CheckCircle size={14} className="text-white" />
+                          )}
+                        </div>
+                        <span className="font-bold">
+                          {m.cognome} {m.nome}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="p-4 border-t border-gray-700 bg-gray-800 flex justify-between items-center">
+                    <span className="text-sm text-gray-400">
+                      Selezionati: <b className="text-white">{list.length}</b>
                     </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="p-4 border-t border-gray-700 bg-gray-800 rounded-b-2xl flex justify-between items-center">
-              <span className="text-sm text-gray-400">
-                Selezionati:{" "}
-                <b className="text-white">
-                  {selectedMembersForPurchase.length}
-                </b>
-              </span>
-              <button
-                onClick={() => setModal({ view: "none" })}
-                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold shadow-lg transition"
-              >
-                CONFERMA
-              </button>
-            </div>
+                    <button
+                      onClick={() =>
+                        setModal({ view: isEdit ? "edit_acquisto" : "none" })
+                      }
+                      className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded font-bold"
+                    >
+                      CONFERMA
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
 
-      {/* --- MODALI STANDARD --- */}
-      <CustomModal
-        isOpen={modal.view === "confirm_delete_acquisto"}
-        title="Elimina Acquisto"
-        onClose={() => setModal({ view: "none" })}
-        variant="danger"
-        actions={
-          <>
-            <button
-              onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
-            >
-              Annulla
-            </button>
-            <button
-              onClick={confirmDeleteAcquisto}
-              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
-            >
-              Elimina
-            </button>
-          </>
-        }
-      >
-        <p>Eliminare questo acquisto? I dati dei versamenti andranno persi.</p>
-      </CustomModal>
-      <CustomModal
-        isOpen={modal.view === "confirm_delete_membro"}
-        title="Elimina Membro"
-        onClose={() => setModal({ view: "none" })}
-        variant="danger"
-        actions={
-          <>
-            <button
-              onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
-            >
-              Annulla
-            </button>
-            <button
-              onClick={confirmDeleteMembro}
-              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
-            >
-              Conferma
-            </button>
-          </>
-        }
-      >
-        <p>Il membro verrà nascosto dalle liste attive.</p>
-      </CustomModal>
-      <CustomModal
-        isOpen={modal.view === "confirm_delete_ALL_membri"}
-        title="Elimina TUTTI i Membri"
-        onClose={() => setModal({ view: "none" })}
-        variant="danger"
-        actions={
-          <>
-            <button
-              onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
-            >
-              Annulla
-            </button>
-            <button
-              onClick={confirmDeleteALLMembri}
-              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
-            >
-              ELIMINA TUTTO
-            </button>
-          </>
-        }
-      >
-        <div className="flex flex-col items-center text-center">
-          <AlertTriangle size={48} className="text-red-500 mb-4" />
-          <p className="text-lg font-bold mb-2">
-            Attenzione: Azione Distruttiva
-          </p>
-          <p>Stai per rimuovere TUTTI i membri dall'anagrafica attiva.</p>
-          <p className="text-sm opacity-70 mt-4">
-            Lo storico pagamenti rimarrà nel database (soft delete), ma l'elenco
-            membri sarà svuotato.
-          </p>
-        </div>
-      </CustomModal>
-      <CustomModal
-        isOpen={modal.view === "confirm_restore"}
-        title="Ripristino Backup"
-        onClose={() => setModal({ view: "none" })}
-        variant="warning"
-        actions={
-          <>
-            <button
-              onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
-            >
-              Annulla
-            </button>
-            <button
-              onClick={confirmRestoreBackup}
-              className="px-4 py-2 rounded bg-yellow-600 hover:bg-yellow-500 font-bold text-black shadow-lg"
-            >
-              Conferma Ripristino
-            </button>
-          </>
-        }
-      >
-        <p>Stai per ripristinare il database al punto di salvataggio:</p>
-        <p className="font-mono text-yellow-400 mt-2 p-2 bg-black/30 rounded border border-yellow-900">
-          {modal.data?.filename}
-        </p>
-        <p className="mt-4 font-bold text-red-400">
-          L'applicazione verrà riavviata automaticamente.
-        </p>
-        <p className="text-sm opacity-70">
-          Tutti i dati inseriti dopo questo backup andranno persi.
-        </p>
-      </CustomModal>
-
-      <CustomModal
-        isOpen={modal.view === "alert"}
-        title={modal.data?.title}
-        onClose={() => setModal({ view: "none" })}
-        variant={modal.data?.variant || "warning"}
-        actions={
-          <button
-            onClick={() => setModal({ view: "none" })}
-            className="px-4 py-2 rounded bg-gray-800 border border-gray-600 font-bold hover:bg-gray-700"
-          >
-            Ho Capito
-          </button>
-        }
-      >
-        <p className="whitespace-pre-wrap text-lg">{modal.data?.msg}</p>
-      </CustomModal>
-
+      {/* --- MODALE EDIT ACQUISTO --- */}
       <CustomModal
         isOpen={modal.view === "edit_acquisto"}
-        title="Modifica Acquisto"
+        title="Modifica Dati Movimento"
         onClose={() => setModal({ view: "none" })}
         variant="neutral"
       >
@@ -844,7 +643,9 @@ function App() {
             />
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-gray-500">PREZZO UNITARIO</label>
+                <label className="text-xs text-gray-500">
+                  IMPORTO / PREZZO
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -869,14 +670,280 @@ function App() {
                 />
               </div>
             </div>
+            {selectedAcquisto && selectedAcquisto.tipo !== "spesa_fondo" && (
+              <button
+                type="button"
+                onClick={() =>
+                  setModal({
+                    view: "select_members",
+                    data: { context: "edit" },
+                  })
+                }
+                className="w-full bg-gray-800 text-gray-300 p-3 rounded font-bold flex justify-between items-center text-sm border border-gray-600 hover:bg-gray-700"
+              >
+                <span>Modifica Destinatari:</span>
+                <span className="text-white bg-gray-900 px-2 py-1 rounded">
+                  {editingMemberSelection.length} Selezionati
+                </span>
+              </button>
+            )}
             <button className="w-full bg-blue-600 p-3 rounded font-bold hover:bg-blue-500">
-              SALVA
+              SALVA DATI
             </button>
           </form>
         )}
       </CustomModal>
 
-      {/* EXCEL BANK PREVIEW */}
+      {/* --- MODALE RIEPILOGO CHIUSURA (REINSERITO IL "BELLO") --- */}
+      <CustomModal
+        isOpen={modal.view === "confirm_purchase"}
+        title="Riepilogo Chiusura"
+        onClose={() => setModal({ view: "none" })}
+        variant="neutral"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+            >
+              Indietro
+            </button>
+            <button
+              onClick={async () => {
+                await window.api.completaAcquisto(modal.data.id);
+                await loadData();
+                selectAcquistoAndReset(null);
+                setModal({ view: "none" });
+              }}
+              className="px-4 py-2 rounded bg-green-600 font-bold text-white shadow-lg hover:bg-green-500 flex items-center"
+            >
+              <CheckCircle size={18} className="mr-2" /> Conferma Chiusura
+            </button>
+          </>
+        }
+      >
+        {modal.data && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center bg-black/20 p-4 rounded-xl border border-gray-800">
+              <div className="text-center w-1/3">
+                <span className="text-xs text-gray-500 uppercase font-bold block mb-1">
+                  Dovuto
+                </span>
+                <span className="text-xl font-bold text-white">
+                  {formatCurrency(modal.data.dovuto)}
+                </span>
+              </div>
+              <div className="text-gray-600">
+                <ArrowRight />
+              </div>
+              <div className="text-center w-1/3">
+                <span className="text-xs text-gray-500 uppercase font-bold block mb-1">
+                  Incassato
+                </span>
+                <span className="text-xl font-bold text-blue-400">
+                  {formatCurrency(modal.data.versato)}
+                </span>
+              </div>
+            </div>
+            <div
+              className={`p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center ${
+                modal.data.diff > 0
+                  ? "bg-red-900/10 border-red-500/30 text-red-400"
+                  : modal.data.diff < 0
+                  ? "bg-green-900/10 border-green-500/30 text-green-400"
+                  : "bg-gray-800/50 border-gray-600 text-gray-300"
+              }`}
+            >
+              <h4 className="font-bold text-lg uppercase tracking-wider mb-1">
+                {modal.data.diff > 0
+                  ? "Deficit (Mancano)"
+                  : modal.data.diff < 0
+                  ? "Surplus (Avanzano)"
+                  : "Perfetto"}
+              </h4>
+              <div className="text-4xl font-bold mb-2">
+                {formatCurrency(Math.abs(modal.data.diff))}
+              </div>
+            </div>
+          </div>
+        )}
+      </CustomModal>
+
+      {/* --- ALTRI MODALI STANDARD --- */}
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_acquisto"}
+        title="Elimina Movimento"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={confirmDeleteAcquisto}
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
+            >
+              Elimina
+            </button>
+          </>
+        }
+      >
+        <p>Sei sicuro? I dati verranno persi e il saldo ricalcolato.</p>
+      </CustomModal>
+      <CustomModal
+        isOpen={modal.view === "alert"}
+        title={modal.data?.title}
+        onClose={() => setModal({ view: "none" })}
+        variant={modal.data?.variant || "warning"}
+        actions={
+          <button
+            onClick={() => setModal({ view: "none" })}
+            className="px-4 py-2 rounded bg-gray-800 border border-gray-600 font-bold hover:bg-gray-700"
+          >
+            Ho Capito
+          </button>
+        }
+      >
+        <p>{modal.data?.msg}</p>
+      </CustomModal>
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_membro"}
+        title="Elimina Membro"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={confirmDeleteMembro}
+              className="bg-red-600 text-white px-4 py-2 rounded font-bold shadow-lg"
+            >
+              Conferma
+            </button>
+          </>
+        }
+      >
+        <p>Vuoi nascondere questo membro?</p>
+      </CustomModal>
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_ALL_membri"}
+        title="Elimina TUTTI i Membri"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={confirmDeleteALLMembri}
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
+            >
+              ELIMINA TUTTO
+            </button>
+          </>
+        }
+      >
+        <p>Stai per rimuovere TUTTI i membri.</p>
+      </CustomModal>
+      <CustomModal
+        isOpen={modal.view === "confirm_restore"}
+        title="Ripristino Backup"
+        onClose={() => setModal({ view: "none" })}
+        variant="warning"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={confirmRestoreBackup}
+              className="bg-yellow-600 text-black px-4 py-2 rounded font-bold shadow-lg"
+            >
+              Conferma Ripristino
+            </button>
+          </>
+        }
+      >
+        <p>
+          Stai per ripristinare il database: {modal.data?.filename}. L'app si
+          riavvierà.
+        </p>
+      </CustomModal>
+
+      {/* EXCEL BANK & FONDO MANUALE */}
+      <CustomModal
+        isOpen={modal.view === "fondo"}
+        title="Fondo Manuale"
+        onClose={() => setModal({ view: "none" })}
+        variant="neutral"
+      >
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await window.api.addMovimentoFondo({
+              importo: parseFloat(newMovimentoFondo.importo),
+              descrizione: newMovimentoFondo.descrizione,
+            });
+            setModal({ view: "none" });
+            setNewMovimentoFondo({ importo: "", descrizione: "" });
+            loadData();
+          }}
+          className="space-y-4"
+        >
+          <input
+            type="number"
+            step="0.01"
+            placeholder="Importo"
+            className="w-full bg-black p-4 rounded-xl border border-gray-700 font-bold text-xl outline-none focus:border-blue-500"
+            value={newMovimentoFondo.importo}
+            onChange={(e) =>
+              setNewMovimentoFondo({
+                ...newMovimentoFondo,
+                importo: e.target.value,
+              })
+            }
+            required
+            autoFocus
+          />
+          <input
+            type="text"
+            placeholder="Descrizione"
+            className="w-full bg-black p-4 rounded-xl border border-gray-700 outline-none focus:border-blue-500"
+            value={newMovimentoFondo.descrizione}
+            onChange={(e) =>
+              setNewMovimentoFondo({
+                ...newMovimentoFondo,
+                descrizione: e.target.value,
+              })
+            }
+            required
+          />
+          <div className="flex justify-end pt-4">
+            <button
+              type="submit"
+              className="bg-white text-black px-6 py-3 rounded-xl font-bold hover:bg-gray-200"
+            >
+              Salva
+            </button>
+          </div>
+        </form>
+      </CustomModal>
       {modal.view === "excel_bank" && (
         <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8">
           <div className="bg-gray-900 w-full max-w-6xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden">
@@ -912,7 +979,6 @@ function App() {
                     className="bg-black border border-gray-600 rounded p-1 text-sm text-gray-300"
                     value={excelDateStart}
                     onChange={(e) => setExcelDateStart(e.target.value)}
-                    title="Dal..."
                   />
                   <span className="text-gray-600">-</span>
                   <input
@@ -920,7 +986,6 @@ function App() {
                     className="bg-black border border-gray-600 rounded p-1 text-sm text-gray-300"
                     value={excelDateEnd}
                     onChange={(e) => setExcelDateEnd(e.target.value)}
-                    title="Al..."
                   />
                 </div>
               </div>
@@ -995,13 +1060,6 @@ function App() {
                       </td>
                     </tr>
                   ))}
-                  {filteredExcelMatches.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="p-8 text-center text-gray-500">
-                        Nessuna transazione trovata con i filtri attuali.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
             </div>
@@ -1018,140 +1076,6 @@ function App() {
         </div>
       )}
 
-      {/* FONDO MANUALE */}
-      <CustomModal
-        isOpen={modal.view === "fondo"}
-        title="Fondo Manuale"
-        onClose={() => setModal({ view: "none" })}
-        variant="neutral"
-      >
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            await window.api.addMovimentoFondo({
-              importo: parseFloat(newMovimentoFondo.importo),
-              descrizione: newMovimentoFondo.descrizione,
-            });
-            setModal({ view: "none" });
-            setNewMovimentoFondo({ importo: "", descrizione: "" });
-            loadData();
-          }}
-          className="space-y-4"
-        >
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Importo"
-            className="w-full bg-black p-4 rounded-xl border border-gray-700 font-bold text-xl outline-none focus:border-blue-500"
-            value={newMovimentoFondo.importo}
-            onChange={(e) =>
-              setNewMovimentoFondo({
-                ...newMovimentoFondo,
-                importo: e.target.value,
-              })
-            }
-            autoFocus
-            required
-          />
-          <input
-            type="text"
-            placeholder="Descrizione"
-            className="w-full bg-black p-4 rounded-xl border border-gray-700 outline-none focus:border-blue-500"
-            value={newMovimentoFondo.descrizione}
-            onChange={(e) =>
-              setNewMovimentoFondo({
-                ...newMovimentoFondo,
-                descrizione: e.target.value,
-              })
-            }
-            required
-          />
-          <div className="flex justify-end pt-4">
-            <button
-              type="submit"
-              className="bg-white text-black px-6 py-3 rounded-xl font-bold hover:bg-gray-200 transition"
-            >
-              Salva Movimento
-            </button>
-          </div>
-        </form>
-      </CustomModal>
-
-      {/* CONFIRM PURCHASE */}
-      <CustomModal
-        isOpen={modal.view === "confirm_purchase"}
-        title="Riepilogo Chiusura"
-        onClose={() => setModal({ view: "none" })}
-        variant="neutral"
-        actions={
-          <>
-            <button
-              onClick={() => setModal({ view: "none" })}
-              className="px-4 py-2 rounded font-bold hover:bg-white/10"
-            >
-              Indietro
-            </button>
-            <button
-              onClick={async () => {
-                await window.api.completaAcquisto(modal.data.id);
-                await loadData();
-                setSelectedAcquisto({ ...selectedAcquisto, completato: 1 });
-                setModal({ view: "none" });
-              }}
-              className="px-4 py-2 rounded bg-green-600 font-bold text-white shadow-lg hover:bg-green-500 flex items-center"
-            >
-              <CheckCircle size={18} className="mr-2" /> Conferma Chiusura
-            </button>
-          </>
-        }
-      >
-        {modal.data && (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center bg-black/20 p-4 rounded-xl border border-gray-800">
-              <div className="text-center w-1/3">
-                <span className="text-xs text-gray-500 uppercase font-bold block mb-1">
-                  Dovuto
-                </span>
-                <span className="text-xl font-bold text-white">
-                  {formatCurrency(modal.data.dovuto)}
-                </span>
-              </div>
-              <div className="text-gray-600">
-                <ArrowRight />
-              </div>
-              <div className="text-center w-1/3">
-                <span className="text-xs text-gray-500 uppercase font-bold block mb-1">
-                  Incassato
-                </span>
-                <span className="text-xl font-bold text-blue-400">
-                  {formatCurrency(modal.data.versato)}
-                </span>
-              </div>
-            </div>
-            <div
-              className={`p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center ${
-                modal.data.diff > 0
-                  ? "bg-red-900/10 border-red-500/30 text-red-400"
-                  : modal.data.diff < 0
-                  ? "bg-green-900/10 border-green-500/30 text-green-400"
-                  : "bg-gray-800/50 border-gray-600 text-gray-300"
-              }`}
-            >
-              <h4 className="font-bold text-lg uppercase tracking-wider mb-1">
-                {modal.data.diff > 0
-                  ? "Deficit"
-                  : modal.data.diff < 0
-                  ? "Surplus"
-                  : "Perfetto"}
-              </h4>
-              <div className="text-4xl font-bold mb-2">
-                {formatCurrency(Math.abs(modal.data.diff))}
-              </div>
-            </div>
-          </div>
-        )}
-      </CustomModal>
-
       {/* SIDEBAR */}
       <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-4">
         <h1 className="text-xl font-bold mb-8 px-2 text-green-500 flex items-center">
@@ -1161,7 +1085,7 @@ function App() {
           Tesoreria
         </h1>
         <nav className="flex-1 space-y-2">
-          {["dashboard", "membri", "acquisti"].map((tab) => (
+          {["dashboard", "movimenti", "membri"].map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -1175,7 +1099,7 @@ function App() {
                 <LayoutDashboard size={20} className="mr-3" />
               )}
               {tab === "membri" && <Users size={20} className="mr-3" />}
-              {tab === "acquisti" && (
+              {tab === "movimenti" && (
                 <ShoppingCart size={20} className="mr-3" />
               )}
               {tab}
@@ -1212,7 +1136,7 @@ function App() {
         </div>
       </aside>
 
-      {/* MAIN CONTENT */}
+      {/* MAIN */}
       <main className="flex-1 overflow-y-auto p-8 bg-gray-950">
         {activeTab === "guida" && (
           <div className="max-w-4xl mx-auto space-y-8">
@@ -1227,8 +1151,8 @@ function App() {
                   </h3>
                   <p>
                     Inserisci qui l'anagrafica. Puoi importare massivamente un
-                    file Excel. Se elimini un membro, questo viene
-                    solo "nascosto" per preservare lo storico dei pagamenti
+                    file Excel. Se elimini un membro, questo viene solo
+                    "nascosto" per preservare lo storico dei pagamenti
                     precedenti.
                   </p>
                 </section>
@@ -1270,7 +1194,7 @@ function App() {
                   1. <strong>Archiviazione Locale:</strong> Tutti i dati
                   inseriti sono salvati <strong>esclusivamente</strong> sul
                   disco locale di questo computer all'interno di un database
-                  criptato SQLite.
+                  SQLite.
                 </p>
                 <p className="mb-2">
                   2. <strong>Backup:</strong> I backup vengono generati
@@ -1324,41 +1248,6 @@ function App() {
                 </p>
               </div>
             </div>
-
-            <div className="flex justify-between items-center mb-4 flex-wrap gap-4">
-              <h3 className="text-xl font-bold flex items-center">
-                <HistoryIcon className="mr-2" /> Movimenti Fondo
-              </h3>
-              <div className="flex items-center gap-2">
-                <input
-                  type="date"
-                  className="bg-black border border-gray-700 rounded p-2 text-sm text-gray-300"
-                  value={filterDateStart}
-                  onChange={(e) => setFilterDateStart(e.target.value)}
-                  title="Da..."
-                />
-                <span className="text-gray-500">-</span>
-                <input
-                  type="date"
-                  className="bg-black border border-gray-700 rounded p-2 text-sm text-gray-300"
-                  value={filterDateEnd}
-                  onChange={(e) => setFilterDateEnd(e.target.value)}
-                  title="A..."
-                />
-              </div>
-              <div className="relative">
-                <Search
-                  className="absolute left-3 top-2 text-gray-500"
-                  size={16}
-                />
-                <input
-                  placeholder="Cerca movimento..."
-                  className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
-                  value={searchFondo}
-                  onChange={(e) => setSearchFondo(e.target.value)}
-                />
-              </div>
-            </div>
             <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
@@ -1374,7 +1263,9 @@ function App() {
                       <td className="p-4 text-gray-400">
                         {new Date(m.data).toLocaleDateString()}
                       </td>
-                      <td className="p-4">{m.descrizione}</td>
+                      <td className="p-4 font-bold text-white">
+                        {m.descrizione}
+                      </td>
                       <td
                         className={`p-4 text-right font-bold ${
                           m.importo >= 0 ? "text-green-400" : "text-red-400"
@@ -1390,7 +1281,422 @@ function App() {
             </div>
           </div>
         )}
-
+        {activeTab === "movimenti" && (
+          <div className="grid grid-cols-12 gap-8 h-full">
+            <div className="col-span-4 flex flex-col h-full overflow-hidden">
+              <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 mb-6 space-y-3">
+                <h3 className="font-bold text-green-400 mb-2">
+                  NUOVO MOVIMENTO
+                </h3>
+                <input
+                  placeholder="Nome / Descrizione"
+                  className="w-full bg-black p-3 rounded border border-gray-700 text-white focus:border-blue-500 outline-none"
+                  value={newAcq.nome}
+                  onChange={(e) =>
+                    setNewAcq({ ...newAcq, nome: e.target.value })
+                  }
+                />
+                <div className="relative">
+                  <select
+                    value={newAcqType}
+                    onChange={(e) => setNewAcqType(e.target.value)}
+                    className="w-full bg-black p-3 rounded border border-gray-700 text-white appearance-none outline-none focus:border-blue-500 font-bold cursor-pointer"
+                  >
+                    <option value="acquisto">
+                      ACQUISTO (Uscita Fornitore)
+                    </option>
+                    <option value="spesa_fondo">SPESA DIRETTA FONDO</option>
+                    <option value="raccolta_fondo">
+                      RACCOLTA FONDO (Entrata)
+                    </option>
+                  </select>
+                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none text-gray-500">
+                    ▼
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder={
+                      newAcqType === "raccolta_fondo"
+                        ? "Quota a Testa"
+                        : "Prezzo Unitario"
+                    }
+                    className="w-full bg-black p-3 rounded border border-gray-700 text-white focus:border-blue-500 outline-none"
+                    value={newAcq.prezzo}
+                    onChange={(e) =>
+                      setNewAcq({ ...newAcq, prezzo: e.target.value })
+                    }
+                  />
+                  {newAcqType !== "raccolta_fondo" &&
+                    newAcqType !== "spesa_fondo" && (
+                      <input
+                        type="number"
+                        placeholder="Acconto"
+                        className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 focus:border-blue-500 outline-none"
+                        value={newAcq.acconto}
+                        onChange={(e) =>
+                          setNewAcq({ ...newAcq, acconto: e.target.value })
+                        }
+                      />
+                    )}
+                </div>
+                {newAcqType !== "spesa_fondo" && (
+                  <button
+                    onClick={() =>
+                      setModal({
+                        view: "select_members",
+                        data: { context: "create" },
+                      })
+                    }
+                    className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 p-3 rounded font-bold transition flex justify-between items-center text-sm"
+                  >
+                    <span>Destinatari:</span>
+                    <span className="text-white bg-gray-900 px-2 py-1 rounded">
+                      {selectedMembersForPurchase.length === 0
+                        ? "TUTTI"
+                        : `${selectedMembersForPurchase.length} Selezionati`}
+                    </span>
+                  </button>
+                )}
+                <button
+                  onClick={handleSaveAcquisto}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded font-bold transition"
+                >
+                  CREA
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                {acquisti.map((a: any) => (
+                  <div
+                    key={a.id}
+                    onClick={() => selectAcquistoAndReset(a)}
+                    className={`p-4 rounded border cursor-pointer flex justify-between items-center transition ${
+                      selectedAcquisto?.id === a.id
+                        ? "border-blue-500 bg-blue-900/20"
+                        : "border-gray-800 bg-gray-900 hover:bg-gray-800"
+                    }`}
+                  >
+                    <div>
+                      <p className="font-bold text-white">{a.nome_acquisto}</p>
+                      <p className="text-sm text-gray-400 flex items-center gap-2">
+                        {formatCurrency(a.prezzo_unitario)}
+                        {a.tipo === "spesa_fondo" && (
+                          <span className="text-xs bg-purple-900 text-purple-300 px-1 rounded flex items-center">
+                            <Wallet size={10} className="mr-1" /> DIRETTA
+                          </span>
+                        )}
+                        {a.tipo === "raccolta_fondo" && (
+                          <span className="text-xs bg-green-900 text-green-300 px-1 rounded flex items-center">
+                            <PiggyBank size={10} className="mr-1" /> RACCOLTA
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    {a.completato ? (
+                      <CheckCircle className="text-green-500" size={20} />
+                    ) : (
+                      <AlertCircle className="text-yellow-500" size={20} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="col-span-8 flex flex-col h-full overflow-hidden">
+              {selectedAcquisto ? (
+                <div className="bg-gray-900 rounded-2xl border border-gray-800 h-full flex flex-col">
+                  <div className="p-6 border-b border-gray-800 flex flex-col gap-4 bg-gray-800/50 rounded-t-2xl">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h2 className="text-3xl font-bold text-white mb-1">
+                          {selectedAcquisto.nome_acquisto}
+                        </h2>
+                        <div className="text-xs text-gray-500 mb-2 font-mono flex items-center">
+                          <CalendarDays size={12} className="mr-1" /> Creazione:{" "}
+                          {new Date(
+                            selectedAcquisto.data_creazione
+                          ).toLocaleDateString()}
+                          {selectedAcquisto.completato && (
+                            <span className="ml-3 text-green-600 flex items-center">
+                              <CheckCircle size={12} className="mr-1" /> Chiuso:{" "}
+                              {new Date(
+                                selectedAcquisto.data_chiusura
+                              ).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        {selectedAcquisto.tipo === "spesa_fondo" ? (
+                          <div className="text-purple-400 font-bold flex items-center mt-2">
+                            <Wallet className="mr-2" size={18} /> USCITA DIRETTA
+                            FONDO
+                          </div>
+                        ) : selectedAcquisto.tipo === "raccolta_fondo" ? (
+                          <div className="text-green-400 font-bold flex items-center mt-2">
+                            <PiggyBank className="mr-2" size={18} /> RACCOLTA
+                            FONDI (ENTRATA)
+                          </div>
+                        ) : (
+                          <div className="text-sm text-gray-400 flex gap-4 items-center">
+                            <span>
+                              Prezzo Totale:{" "}
+                              <b className="text-white text-lg">
+                                {formatCurrency(
+                                  selectedAcquisto.prezzo_unitario
+                                )}
+                              </b>
+                            </span>
+                            <span>
+                              Acconto:{" "}
+                              <b className="text-blue-300 text-lg">
+                                {formatCurrency(
+                                  selectedAcquisto.acconto_fornitore || 0
+                                )}
+                              </b>
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={startEditAcquistoLogic}
+                          className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center shadow-lg"
+                        >
+                          <Edit2 size={14} className="mr-1" /> MODIFICA
+                        </button>
+                        <button
+                          onClick={() => {
+                            setModal({
+                              view: "confirm_delete_acquisto",
+                              data: { id: selectedAcquisto.id },
+                            });
+                          }}
+                          className="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center shadow-lg"
+                        >
+                          <Trash2 size={14} className="mr-1" /> ELIMINA
+                        </button>
+                      </div>
+                    </div>
+                    {!selectedAcquisto.completato &&
+                      selectedAcquisto.tipo !== "spesa_fondo" && (
+                        <div className="flex justify-between items-end border-t border-gray-700 pt-4">
+                          <div className="relative">
+                            <Search
+                              className="absolute left-3 top-2 text-gray-500"
+                              size={16}
+                            />
+                            <input
+                              placeholder="Cerca..."
+                              className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
+                              value={searchQuota}
+                              onChange={(e) => setSearchQuota(e.target.value)}
+                            />
+                          </div>
+                          <div className="flex space-x-2">
+                            <button
+                              onClick={async () => {
+                                const d = quote
+                                  .filter(
+                                    (q) =>
+                                      q.importo_versato <
+                                      q.quantita *
+                                        selectedAcquisto.prezzo_unitario
+                                  )
+                                  .map((q) => ({
+                                    Cognome: q.cognome,
+                                    Nome: q.nome,
+                                    Matricola: q.matricola,
+                                    DaPagare:
+                                      q.quantita *
+                                        selectedAcquisto.prezzo_unitario -
+                                      q.importo_versato,
+                                  }));
+                                if (d.length === 0)
+                                  return setModal({
+                                    view: "alert",
+                                    data: {
+                                      title: "Nessun Moroso",
+                                      variant: "success",
+                                      msg: "Tutti hanno pagato!",
+                                    },
+                                  });
+                                await window.api.exportDebtors({
+                                  acquistoNome: selectedAcquisto.nome_acquisto,
+                                  debtors: d,
+                                });
+                              }}
+                              className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                              title="Scarica Excel"
+                            >
+                              <FileWarning className="mr-2" size={18} /> Morosi
+                            </button>
+                            <button
+                              onClick={handleBankExcelUpload}
+                              className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                            >
+                              <FileSpreadsheet className="mr-2" size={18} />{" "}
+                              Banca
+                            </button>
+                            <button
+                              onClick={() => {
+                                let d = 0,
+                                  v = 0;
+                                quote.forEach((q: any) => {
+                                  d +=
+                                    q.quantita *
+                                    selectedAcquisto.prezzo_unitario;
+                                  v += q.importo_versato;
+                                });
+                                setModal({
+                                  view: "confirm_purchase",
+                                  data: {
+                                    diff: d - v,
+                                    dovuto: d,
+                                    versato: v,
+                                    id: selectedAcquisto.id,
+                                  },
+                                });
+                              }}
+                              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
+                            >
+                              <CheckCircle className="mr-2" size={18} />{" "}
+                              Concludi
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    {!selectedAcquisto.completato ||
+                      selectedAcquisto.tipo === "spesa_fondo" || (
+                        <div className="flex justify-between items-center border-t border-gray-700 pt-4 bg-gray-800/30 p-2 rounded mt-2">
+                          <span className="text-sm text-gray-400 flex items-center">
+                            <Lock size={14} className="mr-2" /> Movimento
+                            Concluso.
+                          </span>
+                          {!isEditingQuotes ? (
+                            <button
+                              onClick={() => setIsEditingQuotes(true)}
+                              className="bg-orange-600 hover:bg-orange-500 text-white px-4 py-2 rounded font-bold text-xs flex items-center transition shadow-lg"
+                            >
+                              <Unlock size={14} className="mr-2" /> MODIFICA
+                              QUOTE
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setIsEditingQuotes(false)}
+                              className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold text-xs flex items-center transition shadow-lg animate-pulse"
+                            >
+                              <Save size={14} className="mr-2" /> SALVA
+                              MODIFICHE
+                            </button>
+                          )}
+                        </div>
+                      )}
+                  </div>
+                  <div className="flex-1 overflow-y-auto">
+                    {selectedAcquisto.tipo === "spesa_fondo" ? (
+                      <div className="h-full flex flex-col items-center justify-center text-gray-500">
+                        <CheckSquare size={64} className="mb-4 opacity-20" />
+                        <p>Questa spesa è registrata come uscita diretta.</p>
+                        <p className="text-sm opacity-60">
+                          Nessuna quota soci da gestire.
+                        </p>
+                      </div>
+                    ) : (
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-gray-950 text-gray-500 text-xs uppercase sticky top-0">
+                          <tr>
+                            <th className="p-4">Membro</th>
+                            <th className="p-4 text-center">Qtà</th>
+                            <th className="p-4 text-right">Dovuto</th>
+                            <th className="p-4 text-right">Versato</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredQuote.map((q: any) => {
+                            const dov =
+                              q.quantita * selectedAcquisto.prezzo_unitario;
+                            const isDisabled =
+                              selectedAcquisto.completato && !isEditingQuotes;
+                            return (
+                              <tr
+                                key={q.id}
+                                className="border-b border-gray-800 hover:bg-gray-800/30"
+                              >
+                                <td className="p-4">
+                                  <div className="font-bold text-base text-white">
+                                    {q.cognome} {q.nome}
+                                  </div>
+                                  {q.matricola && (
+                                    <div className="font-mono text-xs text-blue-300">
+                                      {q.matricola}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    {selectedAcquisto.tipo ===
+                                    "raccolta_fondo" ? (
+                                      <span className="text-gray-500 font-bold">
+                                        -
+                                      </span>
+                                    ) : (
+                                      <QuantityControl
+                                        value={q.quantita}
+                                        onChange={(v) =>
+                                          handleUpdateQuotaUser(
+                                            q,
+                                            "quantita",
+                                            v
+                                          )
+                                        }
+                                        disabled={isDisabled}
+                                      />
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="p-4 text-right font-mono font-bold text-white">
+                                  {formatCurrency(dov)}
+                                </td>
+                                <td className="p-4 text-right">
+                                  <input
+                                    type="number"
+                                    disabled={isDisabled}
+                                    className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${
+                                      q.importo_versato < 0 ||
+                                      q.importo_versato > dov
+                                        ? "border-red-500 text-red-500"
+                                        : "border-gray-700 text-white focus:border-blue-500"
+                                    } ${
+                                      isDisabled
+                                        ? "opacity-50 cursor-not-allowed"
+                                        : ""
+                                    }`}
+                                    value={q.importo_versato}
+                                    onChange={(e) =>
+                                      handleUpdateQuotaUser(
+                                        q,
+                                        "importo_versato",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="h-full flex flex-col items-center justify-center text-gray-600 border-2 border-dashed border-gray-800 rounded-2xl bg-gray-900/50">
+                  <ShoppingCart size={48} className="mb-4 opacity-50" />
+                  <p>Seleziona un movimento</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {activeTab === "membri" && (
           <div>
             <div className="flex justify-between items-center mb-8">
@@ -1398,13 +1704,13 @@ function App() {
               <div className="flex gap-2">
                 <button
                   onClick={handleDeleteALLMembriRequest}
-                  className="bg-red-900/30 border border-red-900 hover:bg-red-900/50 text-red-400 px-4 py-2 rounded flex items-center font-bold transition text-xs"
+                  className="bg-red-900/30 border border-red-900 hover:bg-red-900/50 text-red-400 px-4 py-2 rounded flex items-center font-bold text-xs"
                 >
                   <Trash2 className="mr-2" size={16} /> ELIMINA TUTTI
                 </button>
                 <button
                   onClick={handleImportMembriExcel}
-                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center font-bold transition"
+                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center font-bold"
                 >
                   <Download className="mr-2" size={18} /> Importa Excel
                 </button>
@@ -1470,7 +1776,7 @@ function App() {
                   <button
                     type="button"
                     onClick={cancelEditMembro}
-                    className="bg-gray-700 hover:bg-gray-600 text-white p-3 rounded font-bold transition flex-1"
+                    className="bg-gray-700 hover:bg-gray-600 text-white p-3 rounded font-bold flex-1"
                   >
                     ANNULLA
                   </button>
@@ -1481,30 +1787,12 @@ function App() {
                     editingMembroId
                       ? "bg-blue-600 hover:bg-blue-500"
                       : "bg-green-600 hover:bg-green-500"
-                  } text-white p-3 rounded font-bold transition flex-1`}
+                  } text-white p-3 rounded font-bold flex-1`}
                 >
                   {editingMembroId ? "SALVA" : "AGGIUNGI"}
                 </button>
               </div>
             </form>
-            <div className="flex justify-between items-center mb-4 bg-gray-900 p-4 rounded-xl border border-gray-800">
-              <div className="flex items-center text-gray-400">
-                <Users size={18} className="mr-2" /> Totale Membri:{" "}
-                <b className="text-white ml-1">{membri.length}</b>
-              </div>
-              <div className="relative">
-                <Search
-                  className="absolute left-3 top-2 text-gray-500"
-                  size={16}
-                />
-                <input
-                  placeholder="Cerca membro..."
-                  className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
-                  value={searchMembri}
-                  onChange={(e) => setSearchMembri(e.target.value)}
-                />
-              </div>
-            </div>
             <div className="bg-gray-900 rounded-xl border border-gray-800 overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-gray-800 text-gray-500 text-xs uppercase">
@@ -1534,7 +1822,12 @@ function App() {
                           <Edit2 size={18} />
                         </button>
                         <button
-                          onClick={() => handleDeleteMembroRequest(m.id)}
+                          onClick={() =>
+                            setModal({
+                              view: "confirm_delete_membro",
+                              data: { id: m.id },
+                            })
+                          }
                           className="text-gray-400 hover:text-red-400 p-2"
                         >
                           <Trash2 size={18} />
@@ -1547,382 +1840,6 @@ function App() {
             </div>
           </div>
         )}
-
-        {activeTab === "acquisti" && (
-          <div className="grid grid-cols-12 gap-8 h-full">
-            <div className="col-span-4 flex flex-col h-full overflow-hidden">
-              <div className="bg-gray-900 p-6 rounded-xl border border-gray-800 mb-6 space-y-3">
-                <h3 className="font-bold text-green-400 mb-2">
-                  NUOVO ACQUISTO
-                </h3>
-                <input
-                  placeholder="Nome"
-                  className="w-full bg-black p-3 rounded border border-gray-700 text-white focus:border-blue-500 outline-none"
-                  value={newAcq.nome}
-                  onChange={(e) =>
-                    setNewAcq({ ...newAcq, nome: e.target.value })
-                  }
-                />
-
-                {/* SWITCH FONDO CASSA */}
-                <div
-                  className="flex items-center gap-2 mb-2 p-2 bg-gray-800/50 rounded border border-gray-700 cursor-pointer"
-                  onClick={() => setIsFundExpense(!isFundExpense)}
-                >
-                  <div
-                    className={`w-5 h-5 rounded border flex items-center justify-center ${
-                      isFundExpense
-                        ? "bg-green-500 border-green-500"
-                        : "border-gray-500"
-                    }`}
-                  >
-                    {isFundExpense && (
-                      <CheckCircle size={14} className="text-black" />
-                    )}
-                  </div>
-                  <span className="text-sm font-bold text-gray-300 select-none">
-                    Spesa da Fondo Cassa
-                  </span>
-                </div>
-
-                <div className="flex gap-2">
-                  <input
-                    type="number"
-                    placeholder="Prezzo Unitario"
-                    className="w-full bg-black p-3 rounded border border-gray-700 text-white focus:border-blue-500 outline-none"
-                    value={newAcq.prezzo}
-                    onChange={(e) =>
-                      setNewAcq({ ...newAcq, prezzo: e.target.value })
-                    }
-                  />
-                  {!isFundExpense && (
-                    <input
-                      type="number"
-                      placeholder="Acconto"
-                      className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300 focus:border-blue-500 outline-none"
-                      value={newAcq.acconto}
-                      onChange={(e) =>
-                        setNewAcq({ ...newAcq, acconto: e.target.value })
-                      }
-                    />
-                  )}
-                </div>
-
-                {!isFundExpense && (
-                  <button
-                    onClick={() => setModal({ view: "select_members" })}
-                    className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 p-3 rounded font-bold transition flex justify-between items-center text-sm"
-                  >
-                    <span>Destinatari:</span>
-                    <span className="text-white bg-gray-900 px-2 py-1 rounded">
-                      {selectedMembersForPurchase.length === 0
-                        ? "TUTTI"
-                        : `${selectedMembersForPurchase.length} Selezionati`}
-                    </span>
-                  </button>
-                )}
-
-                <button
-                  onClick={handleSaveAcquisto}
-                  className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded font-bold transition"
-                >
-                  CREA
-                </button>
-              </div>
-              <div className="flex-1 overflow-y-auto space-y-2 pr-2">
-                {acquisti.map((a: any) => (
-                  <div
-                    key={a.id}
-                    onClick={async () => {
-                      setSelectedAcquisto(a);
-                      setQuote(await window.api.getQuote(a.id));
-                      setSearchQuota("");
-                    }}
-                    className={`p-4 rounded border cursor-pointer flex justify-between items-center transition ${
-                      selectedAcquisto?.id === a.id
-                        ? "border-blue-500 bg-blue-900/20"
-                        : "border-gray-800 bg-gray-900 hover:bg-gray-800"
-                    }`}
-                  >
-                    <div>
-                      <p className="font-bold text-white">{a.nome_acquisto}</p>
-                      <p className="text-sm text-gray-400">
-                        {formatCurrency(a.prezzo_unitario)}
-                        {a.is_fund_expense === 1 && (
-                          <span className="ml-2 text-xs bg-purple-900 text-purple-300 px-1 rounded">
-                            FONDO
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                    {a.completato ? (
-                      <CheckCircle className="text-green-500" size={20} />
-                    ) : (
-                      <AlertCircle className="text-yellow-500" size={20} />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* RIGHT SIDE */}
-            <div className="col-span-8 flex flex-col h-full overflow-hidden">
-              {selectedAcquisto ? (
-                <div className="bg-gray-900 rounded-2xl border border-gray-800 h-full flex flex-col">
-                  {/* HEADER ACQUISTO */}
-                  <div className="p-6 border-b border-gray-800 flex flex-col gap-4 bg-gray-800/50 rounded-t-2xl">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h2 className="text-3xl font-bold text-white mb-1">
-                          {selectedAcquisto.nome_acquisto}
-                        </h2>
-
-                        {/* --- VISUALIZZAZIONE DATA --- */}
-                        <div className="text-xs text-gray-500 mb-2 font-mono flex items-center">
-                          <CalendarDays size={12} className="mr-1" />
-                          Data Creazione:{" "}
-                          {new Date(
-                            selectedAcquisto.data_creazione
-                          ).toLocaleDateString()}
-                          {selectedAcquisto.completato &&
-                            selectedAcquisto.data_chiusura && (
-                              <span className="ml-3 text-green-600 flex items-center">
-                                <CheckCircle size={12} className="mr-1" />{" "}
-                                Chiuso il:{" "}
-                                {new Date(
-                                  selectedAcquisto.data_chiusura
-                                ).toLocaleDateString()}
-                              </span>
-                            )}
-                        </div>
-
-                        {selectedAcquisto.is_fund_expense === 1 ? (
-                          <div className="text-purple-400 font-bold flex items-center mt-2">
-                            <Wallet className="mr-2" size={18} /> PAGATO DAL
-                            FONDO CASSA
-                          </div>
-                        ) : (
-                          <div className="text-sm text-gray-400 flex gap-4 items-center">
-                            <span>
-                              Prezzo Unitario:{" "}
-                              <b className="text-white text-lg">
-                                {formatCurrency(
-                                  selectedAcquisto.prezzo_unitario
-                                )}
-                              </b>
-                            </span>
-                            <span>
-                              Acconto:{" "}
-                              <b className="text-blue-300 text-lg">
-                                {formatCurrency(
-                                  selectedAcquisto.acconto_fornitore || 0
-                                )}
-                              </b>
-                            </span>
-                            <span
-                              className={`px-2 py-0.5 rounded text-xs font-bold ${
-                                selectedAcquisto.completato
-                                  ? "bg-green-900 text-green-400"
-                                  : "bg-yellow-900 text-yellow-400"
-                              }`}
-                            >
-                              {selectedAcquisto.completato
-                                ? "CONCLUSO"
-                                : "APERTO"}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      {!selectedAcquisto.completato && (
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              setEditingAcq({
-                                id: selectedAcquisto.id,
-                                nome: selectedAcquisto.nome_acquisto,
-                                prezzo: String(
-                                  selectedAcquisto.prezzo_unitario
-                                ),
-                                acconto: String(
-                                  selectedAcquisto.acconto_fornitore || 0
-                                ),
-                              });
-                              setModal({ view: "edit_acquisto" });
-                            }}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center transition shadow-lg border border-blue-500"
-                          >
-                            <Edit2 size={14} className="mr-1" /> MODIFICA
-                          </button>
-                          <button
-                            onClick={() =>
-                              handleDeleteAcquistoRequest(selectedAcquisto.id)
-                            }
-                            className="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded font-bold text-xs flex items-center transition shadow-lg border border-red-500"
-                          >
-                            <Trash2 size={14} className="mr-1" /> ELIMINA
-                          </button>
-                        </div>
-                      )}
-                    </div>
-
-                    {!selectedAcquisto.completato &&
-                      selectedAcquisto.is_fund_expense !== 1 && (
-                        <div className="flex justify-between items-end border-t border-gray-700 pt-4">
-                          <div className="relative">
-                            <Search
-                              className="absolute left-3 top-2 text-gray-500"
-                              size={16}
-                            />
-                            <input
-                              placeholder="Cerca tra i paganti..."
-                              className="bg-black border border-gray-700 rounded-full py-2 pl-10 pr-4 text-sm w-64 focus:border-blue-500 outline-none"
-                              value={searchQuota}
-                              onChange={(e) => setSearchQuota(e.target.value)}
-                            />
-                          </div>
-                          <div className="flex space-x-2">
-                            <button
-                              onClick={handleExportDebtors}
-                              className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                              title="Scarica Excel di chi non ha pagato"
-                            >
-                              <FileWarning className="mr-2" size={18} /> Morosi
-                            </button>
-                            <button
-                              onClick={handleBankExcelUpload}
-                              className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                            >
-                              <FileSpreadsheet className="mr-2" size={18} />{" "}
-                              Banca
-                            </button>
-                            <button
-                              onClick={() => {
-                                let d = 0,
-                                  v = 0;
-                                quote.forEach((q: any) => {
-                                  d +=
-                                    q.quantita *
-                                    selectedAcquisto.prezzo_unitario;
-                                  v += q.importo_versato;
-                                });
-                                setModal({
-                                  view: "confirm_purchase",
-                                  data: {
-                                    diff: d - v,
-                                    dovuto: d,
-                                    versato: v,
-                                    id: selectedAcquisto.id,
-                                  },
-                                });
-                              }}
-                              className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center transition"
-                            >
-                              <CheckCircle className="mr-2" size={18} />{" "}
-                              Concludi
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto">
-                    {selectedAcquisto.is_fund_expense === 1 ? (
-                      <div className="h-full flex flex-col items-center justify-center text-gray-500">
-                        <CheckSquare size={64} className="mb-4 opacity-20" />
-                        <p>
-                          Questa spesa è stata registrata come uscita diretta
-                          dal Fondo Cassa.
-                        </p>
-                        <p className="text-sm opacity-60">
-                          Nessuna quota da gestire.
-                        </p>
-                      </div>
-                    ) : (
-                      <table className="w-full text-left text-sm">
-                        <thead className="bg-gray-950 text-gray-500 text-xs uppercase sticky top-0">
-                          <tr>
-                            <th className="p-4">Membro</th>
-                            <th className="p-4 text-center">Qtà</th>
-                            <th className="p-4 text-right">Dovuto</th>
-                            <th className="p-4 text-right">Versato</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredQuote.map((q: any) => {
-                            const dov =
-                              q.quantita * selectedAcquisto.prezzo_unitario;
-                            const err =
-                              q.importo_versato < 0 || q.importo_versato > dov;
-                            return (
-                              <tr
-                                key={q.id}
-                                className="border-b border-gray-800 hover:bg-gray-800/30"
-                              >
-                                <td className="p-4">
-                                  <div className="font-bold text-base text-white">
-                                    {q.cognome} {q.nome}
-                                  </div>
-                                  {q.matricola && (
-                                    <div className="font-mono text-xs text-blue-300">
-                                      {q.matricola}
-                                    </div>
-                                  )}
-                                </td>
-                                <td className="p-4 text-center">
-                                  <div className="flex justify-center">
-                                    <QuantityControl
-                                      value={q.quantita}
-                                      onChange={(v) =>
-                                        handleUpdateQuotaUser(q, "quantita", v)
-                                      }
-                                      disabled={selectedAcquisto.completato}
-                                    />
-                                  </div>
-                                </td>
-                                <td className="p-4 text-right font-mono font-bold text-white">
-                                  {formatCurrency(dov)}
-                                </td>
-                                <td className="p-4 text-right">
-                                  <input
-                                    disabled={selectedAcquisto.completato}
-                                    type="number"
-                                    className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${
-                                      err
-                                        ? "border-red-500 text-red-500 focus:border-red-500"
-                                        : "border-gray-700 text-white focus:border-blue-500"
-                                    } ${
-                                      selectedAcquisto.completato
-                                        ? "opacity-50"
-                                        : ""
-                                    }`}
-                                    value={q.importo_versato}
-                                    onChange={(e) =>
-                                      handleUpdateQuotaUser(
-                                        q,
-                                        "importo_versato",
-                                        e.target.value
-                                      )
-                                    }
-                                  />
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-gray-600 border-2 border-dashed border-gray-800 rounded-2xl bg-gray-900/50">
-                  <ShoppingCart size={48} className="mb-4 opacity-50" />
-                  <p>Seleziona un acquisto</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
         {activeTab === "settings" && (
           <div>
             <h2 className="text-3xl font-bold mb-8 text-white">

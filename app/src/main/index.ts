@@ -28,22 +28,12 @@ import { parseBankStatement, parseMembersList } from "./excel_parser";
 import { logSystem, openSystemLog } from "./logger";
 
 process.env["ELECTRON_DISABLE_SECURITY_WARNINGS"] = "true";
-
 let win: BrowserWindow | null = null;
 let splash: BrowserWindow | null = null;
 
 const iconPath = process.env.VITE_DEV_SERVER_URL
   ? path.join(process.cwd(), "public/icon.png")
   : path.join(__dirname, "../../dist/icon.png");
-
-function getPreloadPath() {
-  return path.join(
-    __dirname,
-    process.env.VITE_DEV_SERVER_URL
-      ? "../preload/preload.js"
-      : "../preload/preload.js"
-  );
-}
 
 function createSplashWindow() {
   splash = new BrowserWindow({
@@ -56,55 +46,38 @@ function createSplashWindow() {
     resizable: false,
     webPreferences: { nodeIntegration: true, contextIsolation: false },
   });
-
   const splashPath = process.env.VITE_DEV_SERVER_URL
     ? path.join(process.cwd(), "public/splash.html")
     : path.join(__dirname, "../../dist/splash.html");
-
   splash.loadFile(splashPath);
 }
 
 function showExitSplash() {
-  if (splash && !splash.isDestroyed()) {
-    splash.show();
-  } else {
-    createSplashWindow();
-  }
-  if (splash && !splash.isDestroyed()) {
-    splash.webContents.once("did-finish-load", () => {
-      splash?.webContents.executeJavaScript(
-        `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
-      );
-    });
-    splash.webContents
-      .executeJavaScript(
-        `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
-      )
-      .catch(() => {});
-  }
+  if (splash && !splash.isDestroyed()) splash.show();
+  else createSplashWindow();
+  splash?.webContents.once("did-finish-load", () => {
+    splash?.webContents.executeJavaScript(
+      `if(window.updateProgress) window.updateProgress(100, "Salvataggio e Chiusura...")`
+    );
+  });
 }
 
 async function setupApp() {
   createSplashWindow();
-
   await new Promise((r) => setTimeout(r, 500));
   splash?.webContents
     .executeJavaScript(
       `if(window.updateProgress) window.updateProgress(20, "Connessione Database...")`
     )
     .catch(() => {});
-
-  const dbOk = initDB();
-
-  if (!dbOk) {
+  if (!initDB()) {
     dialog.showErrorBox(
       "Errore Critico",
-      "Impossibile inizializzare il Database.\nControlla i permessi della cartella."
+      "Impossibile inizializzare il Database."
     );
     app.quit();
     return;
   }
-
   splash?.webContents
     .executeJavaScript(
       `if(window.updateProgress) window.updateProgress(60, "Caricamento Interfaccia...")`
@@ -121,16 +94,19 @@ function createMainWindow() {
     backgroundColor: "#0f172a",
     icon: iconPath,
     webPreferences: {
-      preload: getPreloadPath(),
+      preload: path.join(
+        __dirname,
+        process.env.VITE_DEV_SERVER_URL
+          ? "../preload/preload.js"
+          : "../preload/preload.js"
+      ),
       nodeIntegration: false,
       contextIsolation: true,
     },
   });
-
   if (process.env.VITE_DEV_SERVER_URL)
     win.loadURL(process.env.VITE_DEV_SERVER_URL + "src/renderer/index.html");
   else win.loadFile(path.join(__dirname, "../../dist/index.html"));
-
   win.once("ready-to-show", () => {
     splash?.webContents
       .executeJavaScript(
@@ -144,14 +120,11 @@ function createMainWindow() {
     }, 500);
   });
 
-  // --- HANDLERS ---
-
   ipcMain.handle("get-situazione", () => getSituazioneGlobale());
   ipcMain.handle("add-movimento-fondo", (e, data) =>
     addMovimentoFondo(data.importo, data.descrizione)
   );
   ipcMain.handle("get-movimenti-fondo", () => getMovimentiFondo());
-
   ipcMain.handle("get-membri", () => getMembri());
   ipcMain.handle("add-membro", (e, m) => addMembro(m));
   ipcMain.handle("update-membro", (e, { id, membro }) =>
@@ -160,19 +133,12 @@ function createMainWindow() {
   ipcMain.handle("delete-membro", (e, id) => deleteMembro(id));
   ipcMain.handle("delete-all-membri", () => deleteAllMembri());
 
-  // NUOVO HANDLER CREATE ACQUISTO (CON TARGET E FONDO)
+  // MOVIMENTI
   ipcMain.handle("create-acquisto", (e, d) =>
-    createAcquisto(
-      d.nome,
-      d.prezzo,
-      d.acconto,
-      d.targetMemberIds,
-      d.isFundExpense
-    )
+    createAcquisto(d.nome, d.prezzo, d.acconto, d.targetMemberIds, d.tipo)
   );
-
   ipcMain.handle("update-acquisto", (e, d) =>
-    updateAcquisto(d.id, d.nome, d.prezzo, d.acconto)
+    updateAcquisto(d.id, d.nome, d.prezzo, d.acconto, d.targetMemberIds)
   );
   ipcMain.handle("delete-acquisto", (e, id) => deleteAcquisto(id));
   ipcMain.handle("get-acquisti", () => getAcquisti());
@@ -182,26 +148,21 @@ function createMainWindow() {
   );
   ipcMain.handle("completa-acquisto", (e, id) => setAcquistoCompletato(id));
 
+  // SYSTEM
   ipcMain.handle("log-ui-action", (e, msg) => logSystem("ACTION", msg));
   ipcMain.handle("open-log-file", () => openSystemLog());
   ipcMain.handle("get-backups", () => getBackupsList());
   ipcMain.handle("open-backup-folder", () => openBackupFolder());
-
   ipcMain.handle("restore-backup", async (e, filename) => {
-    logSystem("ACTION", `Richiesto ripristino backup: ${filename}`);
     closeDB();
     const success = restoreBackup(filename);
     if (success) {
-      logSystem("INFO", "Backup ripristinato. Riavvio DB...");
-      const dbOk = initDB();
-      if (dbOk) {
-        win?.reload();
-        return true;
-      }
+      initDB();
+      win?.reload();
+      return true;
     }
     return false;
   });
-
   ipcMain.handle("quit-app", () => {
     if (win) win.hide();
     showExitSplash();
@@ -211,22 +172,19 @@ function createMainWindow() {
     }, 2000);
   });
 
+  // TOOLS
   ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
     const res = await dialog.showSaveDialog(win!, {
       title: "Esporta Morosi",
       defaultPath: `Morosi_${acquistoNome
-        .replace(/[^a-zA-Z0-9à-ùÀ-Ù\s_-]/g, "")
-        .trim()
-        .replace(/\s+/g, "_")}.xlsx`,
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .trim()}.xlsx`,
       filters: [{ name: "Excel File", extensions: ["xlsx"] }],
     });
-
     if (res.canceled || !res.filePath) return false;
-
     try {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(debtors);
-      // Colonne aggiustate
       ws["!cols"] = [
         { wch: 20 },
         { wch: 20 },
@@ -236,23 +194,15 @@ function createMainWindow() {
         { wch: 15 },
       ];
       XLSX.utils.book_append_sheet(wb, ws, "Morosi");
-      const buffer = XLSX.write(wb, { bookType: "xlsx", type: "buffer" });
-      fs.writeFileSync(res.filePath, buffer);
+      fs.writeFileSync(
+        res.filePath,
+        XLSX.write(wb, { bookType: "xlsx", type: "buffer" })
+      );
       return true;
     } catch (err: any) {
-      console.error("Errore export excel:", err);
-      if (err.code === "EBUSY") {
-        throw new Error(`IL FILE È GIÀ APERTO!\nChiudi Excel e riprova.`);
-      }
-      if (err.code === "EPERM" || err.code === "EACCES") {
-        throw new Error(
-          `PERMESSO NEGATO.\nWindows ha bloccato il salvataggio.\nProva a salvare sul Desktop.`
-        );
-      }
-      throw new Error(`Errore tecnico: ${err.message}`);
+      throw new Error(err.message);
     }
   });
-
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],
@@ -260,18 +210,14 @@ function createMainWindow() {
     });
     return res.canceled ? null : res.filePaths[0];
   });
-
   ipcMain.handle("analyze-excel-bank", async (e, p) =>
     parseBankStatement(p, getMembri())
   );
-
   ipcMain.handle("import-membri-excel", async (e, p) => {
-    logSystem("INFO", `Importazione membri da: ${p}`);
     const members = await parseMembersList(p);
     let count = 0;
     for (const m of members) {
-      const res = addMembro(m);
-      if (res.changes > 0) count++;
+      if (addMembro(m).changes > 0) count++;
     }
     return count;
   });
