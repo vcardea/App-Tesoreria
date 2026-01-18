@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld("api", {
   addMovimentoFondo: (data: any) =>
     ipcRenderer.invoke("add-movimento-fondo", data),
   getMovimentiFondo: () => ipcRenderer.invoke("get-movimenti-fondo"),
+  toggleDashboardVisibility: (uid: string) =>
+    ipcRenderer.invoke("toggle-dashboard-visibility", uid), // <--- ECCOLO
 
   getMembri: () => ipcRenderer.invoke("get-membri"),
   addMembro: (m: any) => ipcRenderer.invoke("add-membro", m),
@@ -23,7 +25,6 @@ contextBridge.exposeInMainWorld("api", {
   importMembriExcel: (path: string) =>
     ipcRenderer.invoke("import-membri-excel", path),
 
-  // ACQUISTI
   createAcquisto: (data: any) => ipcRenderer.invoke("create-acquisto", data),
   updateAcquisto: (data: any) => ipcRenderer.invoke("update-acquisto", data),
   deleteAcquisto: (id: number) => ipcRenderer.invoke("delete-acquisto", id),
@@ -33,7 +34,6 @@ contextBridge.exposeInMainWorld("api", {
   completaAcquisto: (id: number) => ipcRenderer.invoke("completa-acquisto", id),
 
   exportDebtors: (params: any) => ipcRenderer.invoke("export-debtors", params),
-
   selectFile: () => ipcRenderer.invoke("select-file"),
   analyzeExcelBank: (path: string) =>
     ipcRenderer.invoke("analyze-excel-bank", path),
