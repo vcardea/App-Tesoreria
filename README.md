@@ -36,7 +36,7 @@ Il sistema non si limita alle spese, ma gestisce tre tipologie di flussi finanzi
 
 * **Editing Post-Chiusura:** Hai sbagliato un importo su un evento chiuso? Nessun problema. Sblocca il movimento, modifica le quote o i partecipanti e il software ricalcolerà il saldo del fondo retroattivamente.
 * **Backup & Ripristino:** Sistema di backup automatico locale. Puoi ripristinare il database a uno stato precedente direttamente dalle impostazioni in caso di errori critici.
-* **Privacy 100% Offline:** I dati risiedono in un database SQLite criptato sul tuo disco. Nessun dato viene inviato al cloud.
+* **Privacy 100% Offline:** I dati risiedono in un database SQLite sul tuo disco. Nessun dato viene inviato al cloud.
 
 ## 🚀 Flusso di Lavoro
 
