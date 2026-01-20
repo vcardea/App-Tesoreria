@@ -16,7 +16,7 @@ let db: Database.Database | null = null;
 
 // --- BACKUP SYSTEM ---
 function performBackup() {
-  if (!fs.existsSync(dbPath)) return;
+  if (!fs.existsSync(dbPath)) return null;
   try {
     const now = new Date();
     const timestamp =
@@ -34,7 +34,6 @@ function performBackup() {
     const backupName = `backup_${timestamp}.db`;
     fs.copyFileSync(dbPath, path.join(backupDir, backupName));
 
-    // Pulizia vecchi backup
     const files = fs
       .readdirSync(backupDir)
       .filter((f) => f.endsWith(".db"))
@@ -46,8 +45,33 @@ function performBackup() {
         } catch (e) {}
       }
     }
+    return backupName;
   } catch (e) {
     logSystem("ERROR", "Backup fallito", e);
+    return null;
+  }
+}
+
+export function triggerManualBackup() {
+  return performBackup();
+}
+
+export function resetAnnualData() {
+  if (!db) initDB();
+  const safetyBackup = performBackup();
+  if (!safetyBackup) return false;
+
+  try {
+    const trx = db!.transaction(() => {
+      db!.prepare("DELETE FROM quote_membri").run();
+      db!.prepare("DELETE FROM acquisti").run();
+      db!.prepare("DELETE FROM fondo_cassa").run();
+    });
+    trx();
+    return true;
+  } catch (e) {
+    logSystem("ERROR", "Reset Annuale Fallito", e);
+    return false;
   }
 }
 
@@ -177,6 +201,7 @@ export function getSituazioneGlobale() {
       `SELECT SUM(q.importo_versato) as total FROM quote_membri q JOIN acquisti a ON q.acquisto_id = a.id WHERE a.completato = 0 AND a.tipo IN ('acquisto', 'raccolta_fondo')`,
     )
     .get() as any;
+
   const totaleUscite =
     (usciteFornitori.total || 0) +
     (usciteDirette.total || 0) +
@@ -191,27 +216,44 @@ export function getSituazioneGlobale() {
 
 export function getMovimentiFondo() {
   if (!db) initDB();
+  // MODIFICATO: Aggiunta la UNION per 'raccolta_fondo' conclusa (entra come somma positiva)
   return db!
     .prepare(
       `
     SELECT * FROM (
+        -- 1. Movimenti manuali (Fondo Cassa)
         SELECT 'F-' || id as unique_id, importo, descrizione, data, hidden FROM fondo_cassa
+        
         UNION ALL
-        SELECT 'A-' || a.id, -(a.prezzo_unitario * (SELECT COALESCE(SUM(quantita),0) FROM quote_membri WHERE acquisto_id = a.id)), 'PAGAMENTO: ' || a.nome_acquisto, COALESCE(a.data_chiusura, a.data_creazione), hidden FROM acquisti a WHERE a.completato = 1 AND a.tipo = 'acquisto'
+        
+        -- 2. Pagamenti ai Fornitori (Acquisti conclusi) - USCITA
+        SELECT 'A-' || a.id, -(a.prezzo_unitario * (SELECT COALESCE(SUM(quantita),0) FROM quote_membri WHERE acquisto_id = a.id)), 'PAGAMENTO: ' || a.nome_acquisto, COALESCE(a.data_chiusura, a.data_creazione), hidden 
+        FROM acquisti a WHERE a.completato = 1 AND a.tipo = 'acquisto'
+        
         UNION ALL
-        SELECT 'S-' || a.id, -a.prezzo_unitario, 'SPESA DIRETTA: ' || a.nome_acquisto, COALESCE(a.data_chiusura, a.data_creazione), hidden FROM acquisti a WHERE a.tipo = 'spesa_fondo'
-    ) ORDER BY data DESC LIMIT 100
+        
+        -- 3. Spese Dirette o Storico - USCITA
+        SELECT 'S-' || a.id, -a.prezzo_unitario, 'SPESA DIRETTA: ' || a.nome_acquisto, COALESCE(a.data_chiusura, a.data_creazione), hidden 
+        FROM acquisti a WHERE a.tipo IN ('spesa_fondo', 'storico')
+
+        UNION ALL
+
+        -- 4. Raccolta Fondi Conclusa - ENTRATA (Nuovo)
+        SELECT 'R-' || a.id, (SELECT COALESCE(SUM(importo_versato), 0) FROM quote_membri WHERE acquisto_id = a.id), 'RACCOLTA: ' || a.nome_acquisto, COALESCE(a.data_chiusura, a.data_creazione), hidden
+        FROM acquisti a WHERE a.completato = 1 AND a.tipo = 'raccolta_fondo'
+
+    ) ORDER BY datetime(data) DESC LIMIT 100
   `,
     )
     .all();
 }
 
-// TOGGLE VISIBILITA DASHBOARD (NON CANCELLA DATI)
 export function toggleDashboardVisibility(uniqueId: string) {
   if (!db) initDB();
   const type = uniqueId.substring(0, 2);
   const id = parseInt(uniqueId.substring(2));
 
+  // Supporto per i vari prefissi
   if (type === "F-") {
     const cur = db!
       .prepare("SELECT hidden FROM fondo_cassa WHERE id = ?")
@@ -221,6 +263,7 @@ export function toggleDashboardVisibility(uniqueId: string) {
         .prepare("UPDATE fondo_cassa SET hidden = ? WHERE id = ?")
         .run(cur.hidden ? 0 : 1, id);
   } else {
+    // A-, S-, R- sono tutti nella tabella acquisti
     const cur = db!
       .prepare("SELECT hidden FROM acquisti WHERE id = ?")
       .get(id) as any;
@@ -232,29 +275,52 @@ export function toggleDashboardVisibility(uniqueId: string) {
   return true;
 }
 
+export function deleteMovimentoFondo(id: number) {
+  if (!db) initDB();
+  return db!.prepare("DELETE FROM fondo_cassa WHERE id = ?").run(id);
+}
+
 export function createAcquisto(
   n: string,
   p: number,
   acconto: number,
-  targetIds: number[] | null,
+  targetIds: any[] | null,
   tipo: string,
+  date?: string,
 ) {
   if (!db) initDB();
   const trx = db!.transaction(() => {
-    const isCompleted = tipo === "spesa_fondo" ? 1 : 0;
-    const dataChiusura =
-      tipo === "spesa_fondo" ? new Date().toISOString() : null;
+    const isCompleted = tipo === "spesa_fondo" || tipo === "storico" ? 1 : 0;
+    const creationDate = date
+      ? new Date(date).toISOString()
+      : new Date().toISOString();
+    const dataChiusura = isCompleted ? creationDate : null;
+
     const id = db!
       .prepare(
-        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore, tipo, completato, data_chiusura, hidden) VALUES (?, ?, ?, ?, ?, ?, 0)",
+        "INSERT INTO acquisti (nome_acquisto, prezzo_unitario, acconto_fornitore, tipo, completato, data_creazione, data_chiusura, hidden) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
       )
-      .run(n, p, acconto || 0, tipo, isCompleted, dataChiusura).lastInsertRowid;
-    if (tipo !== "spesa_fondo") {
+      .run(
+        n,
+        p,
+        acconto || 0,
+        tipo,
+        isCompleted,
+        creationDate,
+        dataChiusura,
+      ).lastInsertRowid;
+
+    if (tipo !== "spesa_fondo" && tipo !== "storico") {
       if (targetIds && targetIds.length > 0) {
         const stmt = db!.prepare(
-          "INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) VALUES (?, ?, 1, 0)",
+          "INSERT INTO quote_membri (acquisto_id, membro_id, quantita, importo_versato) VALUES (?, ?, 1, ?)",
         );
-        for (const mId of targetIds) stmt.run(id, mId);
+        for (const target of targetIds) {
+          const mId = typeof target === "number" ? target : target.id;
+          const versato =
+            typeof target === "object" && target.versato ? target.versato : 0;
+          stmt.run(id, mId, versato);
+        }
       } else {
         db!
           .prepare(
@@ -274,6 +340,7 @@ export function updateAcquisto(
   p: number,
   acconto: number,
   targetIds?: number[],
+  date?: string,
 ) {
   if (!db) initDB();
   const trx = db!.transaction(() => {
@@ -282,6 +349,17 @@ export function updateAcquisto(
         "UPDATE acquisti SET nome_acquisto = ?, prezzo_unitario = ?, acconto_fornitore = ? WHERE id = ?",
       )
       .run(n, p, acconto, id);
+    if (date) {
+      const isoDate = new Date(date).toISOString();
+      db!
+        .prepare("UPDATE acquisti SET data_creazione = ? WHERE id = ?")
+        .run(isoDate, id);
+      db!
+        .prepare(
+          "UPDATE acquisti SET data_chiusura = ? WHERE id = ? AND completato = 1",
+        )
+        .run(isoDate, id);
+    }
     if (targetIds) {
       const currentQuotes = db!
         .prepare("SELECT membro_id FROM quote_membri WHERE acquisto_id = ?")

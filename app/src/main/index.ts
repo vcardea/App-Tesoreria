@@ -23,7 +23,10 @@ import {
   openBackupFolder,
   updateAcquisto,
   deleteAcquisto,
-  toggleDashboardVisibility, // IMPORTANTE
+  toggleDashboardVisibility,
+  deleteMovimentoFondo,
+  triggerManualBackup,
+  resetAnnualData, // <--- NUOVI IMPORT
 } from "./db";
 import { parseBankStatement, parseMembersList } from "./excel_parser";
 import { logSystem, openSystemLog } from "./logger";
@@ -93,7 +96,7 @@ async function setupApp() {
 }
 
 function createMainWindow() {
-  const preloadPath = path.join(__dirname, "../preload/preload.js"); // Assicurati sia corretto
+  const preloadPath = path.join(__dirname, "../preload/preload.js");
   win = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -130,7 +133,11 @@ function createMainWindow() {
   ipcMain.handle("get-movimenti-fondo", () => getMovimentiFondo());
   ipcMain.handle("toggle-dashboard-visibility", (e, uid) =>
     toggleDashboardVisibility(uid),
-  ); // QUI
+  );
+  ipcMain.handle("delete-movimento-fondo", (e, id) => deleteMovimentoFondo(id));
+
+  ipcMain.handle("trigger-manual-backup", () => triggerManualBackup()); // <--- NUOVO
+  ipcMain.handle("reset-annual-data", () => resetAnnualData()); // <--- NUOVO
 
   ipcMain.handle("get-membri", () => getMembri());
   ipcMain.handle("add-membro", (e, m) => addMembro(m));
@@ -139,12 +146,28 @@ function createMainWindow() {
   );
   ipcMain.handle("delete-membro", (e, id) => deleteMembro(id));
   ipcMain.handle("delete-all-membri", () => deleteAllMembri());
+
   ipcMain.handle("create-acquisto", (e, d) =>
-    createAcquisto(d.nome, d.prezzo, d.acconto, d.targetMemberIds, d.tipo),
+    createAcquisto(
+      d.nome,
+      d.prezzo,
+      d.acconto,
+      d.targetMemberIds,
+      d.tipo,
+      d.date,
+    ),
   );
   ipcMain.handle("update-acquisto", (e, d) =>
-    updateAcquisto(d.id, d.nome, d.prezzo, d.acconto, d.targetMemberIds),
+    updateAcquisto(
+      d.id,
+      d.nome,
+      d.prezzo,
+      d.acconto,
+      d.targetMemberIds,
+      d.date,
+    ),
   );
+
   ipcMain.handle("delete-acquisto", (e, id) => deleteAcquisto(id));
   ipcMain.handle("get-acquisti", () => getAcquisti());
   ipcMain.handle("get-quote", (e, id) => getQuoteAcquisto(id));
@@ -174,6 +197,7 @@ function createMainWindow() {
       app.quit();
     }, 2000);
   });
+
   ipcMain.handle("export-debtors", async (e, { acquistoNome, debtors }) => {
     const res = await dialog.showSaveDialog(win!, {
       title: "Esporta Morosi",
@@ -202,6 +226,35 @@ function createMainWindow() {
       throw new Error(err.message);
     }
   });
+
+  ipcMain.handle("export-membri", async () => {
+    const res = await dialog.showSaveDialog(win!, {
+      title: "Esporta Membri",
+      defaultPath: `Lista_Membri_${new Date().toISOString().split("T")[0]}.xlsx`,
+      filters: [{ name: "Excel File", extensions: ["xlsx"] }],
+    });
+    if (res.canceled || !res.filePath) return false;
+    try {
+      const membri = getMembri();
+      const exportData = membri.map((m: any) => ({
+        Cognome: m.cognome,
+        Nome: m.nome,
+        Matricola: m.matricola,
+      }));
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(exportData);
+      ws["!cols"] = [{ wch: 25 }, { wch: 25 }, { wch: 15 }];
+      XLSX.utils.book_append_sheet(wb, ws, "Membri");
+      fs.writeFileSync(
+        res.filePath,
+        XLSX.write(wb, { bookType: "xlsx", type: "buffer" }),
+      );
+      return true;
+    } catch (err: any) {
+      throw new Error(err.message);
+    }
+  });
+
   ipcMain.handle("select-file", async () => {
     const res = await dialog.showOpenDialog(win!, {
       properties: ["openFile"],

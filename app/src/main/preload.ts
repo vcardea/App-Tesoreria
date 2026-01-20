@@ -14,7 +14,12 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("add-movimento-fondo", data),
   getMovimentiFondo: () => ipcRenderer.invoke("get-movimenti-fondo"),
   toggleDashboardVisibility: (uid: string) =>
-    ipcRenderer.invoke("toggle-dashboard-visibility", uid), // <--- ECCOLO
+    ipcRenderer.invoke("toggle-dashboard-visibility", uid),
+  deleteMovimentoFondo: (id: number) =>
+    ipcRenderer.invoke("delete-movimento-fondo", id),
+
+  triggerManualBackup: () => ipcRenderer.invoke("trigger-manual-backup"), // <--- NUOVO
+  resetAnnualData: () => ipcRenderer.invoke("reset-annual-data"), // <--- NUOVO
 
   getMembri: () => ipcRenderer.invoke("get-membri"),
   addMembro: (m: any) => ipcRenderer.invoke("add-membro", m),
@@ -24,6 +29,7 @@ contextBridge.exposeInMainWorld("api", {
   deleteAllMembri: () => ipcRenderer.invoke("delete-all-membri"),
   importMembriExcel: (path: string) =>
     ipcRenderer.invoke("import-membri-excel", path),
+  exportMembri: () => ipcRenderer.invoke("export-membri"),
 
   createAcquisto: (data: any) => ipcRenderer.invoke("create-acquisto", data),
   updateAcquisto: (data: any) => ipcRenderer.invoke("update-acquisto", data),

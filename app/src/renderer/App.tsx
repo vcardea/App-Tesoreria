@@ -35,6 +35,8 @@ import {
   EyeOff,
   ChevronDown,
   ChevronRight,
+  HelpCircle,
+  Info,
 } from "lucide-react";
 
 interface Quota {
@@ -51,6 +53,7 @@ declare global {
     api: any;
   }
 }
+
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("it-IT", { style: "currency", currency: "EUR" }).format(
     amount,
@@ -68,7 +71,9 @@ const QuantityControl = ({
   disabled?: boolean;
 }) => (
   <div
-    className={`flex items-center bg-gray-950 border border-gray-600 rounded-lg overflow-hidden w-40 h-10 shadow-lg ${disabled ? "opacity-50 pointer-events-none" : ""}`}
+    className={`flex items-center bg-gray-950 border border-gray-600 rounded-lg overflow-hidden w-40 h-10 shadow-lg ${
+      disabled ? "opacity-50 pointer-events-none" : ""
+    }`}
   >
     <button
       onClick={() => value > 1 && onChange(value - 1)}
@@ -185,13 +190,14 @@ function App() {
   const [newAcqType, setNewAcqType] = useState("acquisto");
   const [newAcq, setNewAcq] = useState({ nome: "", prezzo: "", acconto: "" });
 
-  // FIX SELEZIONE: Due stati separati
+  const [newAcqDate, setNewAcqDate] = useState("");
   const [selectedMembersForPurchase, setSelectedMembersForPurchase] = useState<
-    number[]
+    any[]
   >([]);
   const [editingMemberSelection, setEditingMemberSelection] = useState<
     number[]
   >([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   const [editingAcq, setEditingAcq] = useState<any>(null);
   const [newMovimentoFondo, setNewMovimentoFondo] = useState({
@@ -212,7 +218,17 @@ function App() {
   const [modal, setModal] = useState<{ view: string; data?: any }>({
     view: "none",
   });
-  const [showArchived, setShowArchived] = useState(false);
+
+  // STATI WIZARD IMPORTAZIONE (CREAZIONE)
+  const [importCreationMatches, setImportCreationMatches] = useState<any[]>([]);
+  const [selectedMatchesForCreation, setSelectedMatchesForCreation] = useState<
+    number[]
+  >([]);
+  const [markAsPaid, setMarkAsPaid] = useState(false);
+  // Filtri Wizard
+  const [wizardSearch, setWizardSearch] = useState("");
+  const [wizardDateStart, setWizardDateStart] = useState("");
+  const [wizardDateEnd, setWizardDateEnd] = useState("");
 
   const loadData = async () => {
     try {
@@ -258,7 +274,6 @@ function App() {
     [activeQuotesSource, searchQuota],
   );
 
-  // LOGICA DASHBOARD: Filtro Visibili/Nascosti
   const filteredFondo = useMemo(
     () =>
       movimentiFondo.filter((m) => {
@@ -301,6 +316,26 @@ function App() {
     [excelMatches, searchExcel, excelDateStart, excelDateEnd],
   );
 
+  // FILTRO WIZARD IMPORTAZIONE (NUOVO)
+  const filteredWizardMatches = useMemo(() => {
+    return importCreationMatches
+      .map((m, i) => ({ ...m, originalIndex: i }))
+      .filter((m) => {
+        const textMatch =
+          m.nome_trovato.toUpperCase().includes(wizardSearch.toUpperCase()) ||
+          m.linea_originale.toUpperCase().includes(wizardSearch.toUpperCase());
+        if (!textMatch) return false;
+        if (m.data_movimento && (wizardDateStart || wizardDateEnd)) {
+          const mDate = new Date(m.data_movimento);
+          mDate.setHours(0, 0, 0, 0);
+          if (wizardDateStart && mDate < new Date(wizardDateStart))
+            return false;
+          if (wizardDateEnd && mDate > new Date(wizardDateEnd)) return false;
+        }
+        return true;
+      });
+  }, [importCreationMatches, wizardSearch, wizardDateStart, wizardDateEnd]);
+
   const handleSaveMembro = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newMembro.nome || !newMembro.cognome) return;
@@ -314,19 +349,66 @@ function App() {
 
   const handleSaveAcquisto = async () => {
     if (!newAcq.nome || !newAcq.prezzo) return;
+
+    // CONTROLLO DATA FUTURA
+    if (newAcqType === "storico") {
+      if (!newAcqDate) {
+        setModal({
+          view: "alert",
+          data: {
+            title: "Data Mancante",
+            msg: "Inserisci la data della transazione storica.",
+          },
+        });
+        return;
+      }
+      // Confronto date (solo giorno/mese/anno)
+      const selected = new Date(newAcqDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0); // Ignora l'ora di oggi
+
+      if (selected > today) {
+        setModal({
+          view: "alert",
+          data: {
+            title: "Data Invalida",
+            msg: "Non puoi registrare transazioni nel futuro.",
+          },
+        });
+        return;
+      }
+    }
+
     const p = parseFloat(newAcq.prezzo);
     const a = newAcq.acconto ? parseFloat(newAcq.acconto) : 0;
-    let targetIds = null;
-    if (newAcqType !== "spesa_fondo" && selectedMembersForPurchase.length > 0)
+
+    if (p < 0 || a < 0) {
+      setModal({
+        view: "alert",
+        data: { title: "Errore Valori", msg: "No negativi." },
+      });
+      return;
+    }
+
+    let targetIds: any = null;
+    if (
+      newAcqType !== "spesa_fondo" &&
+      newAcqType !== "storico" &&
+      selectedMembersForPurchase.length > 0
+    )
       targetIds = selectedMembersForPurchase;
+
     await window.api.createAcquisto({
       nome: newAcq.nome,
       prezzo: p,
-      acconto: newAcqType === "spesa_fondo" ? 0 : a,
+      acconto: newAcqType === "spesa_fondo" || newAcqType === "storico" ? 0 : a,
       targetMemberIds: targetIds,
       tipo: newAcqType,
+      date: newAcqDate || null,
     });
+
     setNewAcq({ nome: "", prezzo: "", acconto: "" });
+    setNewAcqDate("");
     setSelectedMembersForPurchase([]);
     loadData();
   };
@@ -334,12 +416,17 @@ function App() {
   const startEditAcquistoLogic = async () => {
     const q = await window.api.getQuote(selectedAcquisto.id);
     const currentMemberIds = q.map((i: any) => i.membro_id);
-    setEditingMemberSelection(currentMemberIds); // INIZIALIZZA LISTA MODIFICA
+    setEditingMemberSelection(currentMemberIds);
+    const currentDate = selectedAcquisto.data_creazione
+      ? new Date(selectedAcquisto.data_creazione).toISOString().split("T")[0]
+      : "";
     setEditingAcq({
       id: selectedAcquisto.id,
       nome: selectedAcquisto.nome_acquisto,
       prezzo: String(selectedAcquisto.prezzo_unitario),
       acconto: String(selectedAcquisto.acconto_fornitore || 0),
+      date: currentDate,
+      tipo: selectedAcquisto.tipo,
     });
     setModal({ view: "edit_acquisto" });
   };
@@ -353,6 +440,7 @@ function App() {
       prezzo: parseFloat(editingAcq.prezzo),
       acconto: parseFloat(editingAcq.acconto || 0),
       targetMemberIds: editingMemberSelection,
+      date: editingAcq.date,
     });
     setModal({ view: "none" });
     if (selectedAcquisto && selectedAcquisto.id === editingAcq.id) {
@@ -361,26 +449,33 @@ function App() {
       setSelectedAcquisto(newItem);
       setQuote(await window.api.getQuote(newItem.id));
     }
+    setEditingAcq(null);
     loadData();
   };
 
   const handleUpdateQuotaUser = async (
     q: Quota,
-    f: string,
+    field: string,
     val: string | number,
   ) => {
     let v = typeof val === "string" ? parseFloat(val) : val;
     if (isNaN(v) || v < 0) return;
-    const nQ = f === "quantita" ? v : q.quantita;
-    const nV = f === "importo_versato" ? v : q.importo_versato;
+    const newQta = field === "quantita" ? v : q.quantita;
+    const newVersato = field === "importo_versato" ? v : q.importo_versato;
     if (isEditingQuotes) {
       setTempQuotes((prev) =>
         prev.map((i) =>
-          i.id === q.id ? { ...i, quantita: nQ, importo_versato: nV } : i,
+          i.id === q.id
+            ? { ...i, quantita: newQta, importo_versato: newVersato }
+            : i,
         ),
       );
     } else {
-      await window.api.updateQuota({ id: q.id, qta: nQ, versato: nV });
+      await window.api.updateQuota({
+        id: q.id,
+        qta: newQta,
+        versato: newVersato,
+      });
       setQuote(await window.api.getQuote(selectedAcquisto.id));
       setSituazione(await window.api.getSituazione());
     }
@@ -462,12 +557,17 @@ function App() {
       setIsLoading(false);
     }
   };
+
+  // --- FIX BUG SCHERMO BIANCO (Gestione vecchio Excel) ---
   const handleBankExcelUpload = async () => {
     const path = await window.api.selectFile();
     if (!path) return;
     setIsLoading(true);
     try {
-      const matches = await window.api.analyzeExcelBank(path);
+      // result ora è { matched, unmatched }
+      const result = await window.api.analyzeExcelBank(path);
+      // Prendo solo MATCHED per la vecchia funzione
+      const matches = result.matched;
       setExcelMatches(matches);
       setSelectedMatches(matches.map((_: any, i: any) => i));
       setModal({ view: "excel_bank" });
@@ -477,6 +577,7 @@ function App() {
       setIsLoading(false);
     }
   };
+
   const handleImportMembriExcel = async () => {
     const path = await window.api.selectFile();
     if (!path) return;
@@ -526,10 +627,132 @@ function App() {
     );
   };
 
-  // TOGGLE VISIBILITA DASHBOARD
   const toggleRowVisibility = async (uniqueId: string) => {
     await window.api.toggleDashboardVisibility(uniqueId);
     loadData();
+  };
+
+  const handleDeleteMovimentoFondo = async () => {
+    const id = modal.data?.id;
+    if (id) {
+      await window.api.deleteMovimentoFondo(id);
+      setModal({ view: "none" });
+      loadData();
+    }
+  };
+
+  // --- NUOVI HANDLER IMPOSTAZIONI ---
+  const handleManualBackup = async () => {
+    setIsLoading(true);
+    const res = await window.api.triggerManualBackup();
+    setIsLoading(false);
+    if (res) {
+      setModal({
+        view: "alert",
+        data: {
+          title: "Backup Completato",
+          variant: "success",
+          msg: `Creato file: ${res}`,
+        },
+      });
+      loadData(); // Ricarica lista backup
+    } else {
+      setModal({
+        view: "alert",
+        data: { title: "Errore", msg: "Impossibile creare backup." },
+      });
+    }
+  };
+
+  const handleResetAnnualData = async () => {
+    setIsLoading(true);
+    const success = await window.api.resetAnnualData();
+    setIsLoading(false);
+    setModal({ view: "none" });
+    if (success) {
+      setModal({
+        view: "alert",
+        data: {
+          title: "Reset Completato",
+          variant: "success",
+          msg: "Tutti i movimenti sono stati archiviati. I membri sono stati mantenuti.",
+        },
+      });
+      loadData();
+    } else {
+      setModal({
+        view: "alert",
+        data: { title: "Errore", msg: "Reset fallito." },
+      });
+    }
+  };
+
+  const handleExportMembri = async () => {
+    try {
+      const success = await window.api.exportMembri();
+      if (success)
+        setModal({
+          view: "alert",
+          data: {
+            title: "Successo",
+            variant: "success",
+            msg: "Lista membri esportata correttamente.",
+          },
+        });
+    } catch (e: any) {
+      setModal({
+        view: "alert",
+        data: { title: "Errore Export", msg: e.message },
+      });
+    }
+  };
+
+  const handleBankImportForCreation = async () => {
+    const path = await window.api.selectFile();
+    if (!path) return;
+    setIsLoading(true);
+    try {
+      const result = await window.api.analyzeExcelBank(path);
+      setImportCreationMatches(result.matched);
+      // Seleziona di default tutti i match trovati
+      setSelectedMatchesForCreation(
+        result.matched.map((_: any, i: number) => i),
+      );
+      setModal({ view: "import_creation_wizard" });
+    } catch (e: any) {
+      setModal({ view: "alert", data: { title: "Errore", msg: e.message } });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const confirmCreationFromBank = () => {
+    // 1. Crea una Mappa per aggregare (chiave: membro_id)
+    const aggregationMap = new Map<number, number>();
+
+    // 2. Cicla su tutte le righe selezionate
+    selectedMatchesForCreation.forEach((idx) => {
+      const m = importCreationMatches[idx];
+      const currentTotal = aggregationMap.get(m.membro_id) || 0;
+
+      // Se l'utente ha spuntato "Registra come PAGATI", sommiamo l'importo.
+      // Altrimenti sommiamo 0 (ma registriamo comunque l'ID per la selezione).
+      const amountToAdd = markAsPaid ? m.importo_trovato : 0;
+
+      aggregationMap.set(m.membro_id, currentTotal + amountToAdd);
+    });
+
+    // 3. Converti la Mappa in un array pulito di oggetti
+    const selectedPeople = Array.from(aggregationMap.entries()).map(
+      ([id, versato]) => ({
+        id: id,
+        versato: versato,
+      }),
+    );
+
+    // 4. Salva nello stato (usando 'as any' perché lo stato era number[], ma ora gestiamo oggetti)
+    setSelectedMembersForPurchase(selectedPeople as any);
+    setModal({ view: "none" });
   };
 
   return (
@@ -540,7 +763,7 @@ function App() {
         </div>
       )}
 
-      {/* --- MODALE SELECT MEMBERS (FIX CONTESTO) --- */}
+      {/* --- MODALE SELECT MEMBERS --- */}
       {modal.view === "select_members" && (
         <div className="absolute inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
           <div className="bg-gray-900 w-full max-w-2xl h-[80vh] rounded-2xl border border-gray-700 flex flex-col shadow-2xl">
@@ -593,16 +816,24 @@ function App() {
                       <div
                         key={m.id}
                         onClick={() =>
-                          setList((prev) =>
+                          setList((prev: any[]) =>
                             prev.includes(m.id)
-                              ? prev.filter((x) => x !== m.id)
+                              ? prev.filter((x: any) => x !== m.id)
                               : [...prev, m.id],
                           )
                         }
-                        className={`flex items-center p-3 rounded cursor-pointer border transition ${currentList.includes(m.id) ? "bg-blue-900/40 border-blue-500" : "bg-gray-800 border-transparent hover:bg-gray-700"}`}
+                        className={`flex items-center p-3 rounded cursor-pointer border transition ${
+                          currentList.includes(m.id)
+                            ? "bg-blue-900/40 border-blue-500"
+                            : "bg-gray-800 border-transparent hover:bg-gray-700"
+                        }`}
                       >
                         <div
-                          className={`w-5 h-5 rounded border mr-3 flex items-center justify-center ${currentList.includes(m.id) ? "bg-blue-500 border-blue-500" : "border-gray-500"}`}
+                          className={`w-5 h-5 rounded border mr-3 flex items-center justify-center ${
+                            currentList.includes(m.id)
+                              ? "bg-blue-500 border-blue-500"
+                              : "border-gray-500"
+                          }`}
                         >
                           {currentList.includes(m.id) && (
                             <CheckCircle size={14} className="text-white" />
@@ -637,6 +868,7 @@ function App() {
         </div>
       )}
 
+      {/* --- MODALE EDIT ACQUISTO --- */}
       <CustomModal
         isOpen={modal.view === "edit_acquisto"}
         title="Modifica Dati Movimento"
@@ -654,10 +886,23 @@ function App() {
               placeholder="Nome"
               required
             />
+            <div>
+              <label className="text-xs text-gray-500 uppercase font-bold">
+                Data (Opzionale)
+              </label>
+              <input
+                type="date"
+                value={editingAcq.date || ""}
+                onChange={(e) =>
+                  setEditingAcq({ ...editingAcq, date: e.target.value })
+                }
+                className="w-full bg-black p-3 rounded border border-gray-700 text-white"
+              />
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-xs text-gray-500">
-                  IMPORTO / PREZZO
+                <label className="text-xs text-gray-500 uppercase font-bold">
+                  Importo
                 </label>
                 <input
                   type="number"
@@ -670,42 +915,49 @@ function App() {
                   required
                 />
               </div>
-              <div>
-                <label className="text-xs text-gray-500">ACCONTO</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  value={editingAcq.acconto}
-                  onChange={(e) =>
-                    setEditingAcq({ ...editingAcq, acconto: e.target.value })
-                  }
-                  className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300"
-                />
-              </div>
+              {editingAcq.tipo !== "storico" && (
+                <div>
+                  <label className="text-xs text-gray-500 uppercase font-bold">
+                    Acconto
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingAcq.acconto}
+                    onChange={(e) =>
+                      setEditingAcq({ ...editingAcq, acconto: e.target.value })
+                    }
+                    className="w-full bg-black p-3 rounded border border-gray-700 text-blue-300"
+                  />
+                </div>
+              )}
             </div>
-            {selectedAcquisto && selectedAcquisto.tipo !== "spesa_fondo" && (
-              <button
-                type="button"
-                onClick={() =>
-                  setModal({
-                    view: "select_members",
-                    data: { context: "edit" },
-                  })
-                }
-                className="w-full bg-gray-800 text-gray-300 p-3 rounded font-bold flex justify-between items-center text-sm border border-gray-600 hover:bg-gray-700"
-              >
-                <span>Modifica Destinatari:</span>
-                <span className="text-white bg-gray-900 px-2 py-1 rounded">
-                  {editingMemberSelection.length} Selezionati
-                </span>
-              </button>
-            )}
+            {selectedAcquisto &&
+              selectedAcquisto.tipo !== "spesa_fondo" &&
+              selectedAcquisto.tipo !== "storico" && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setModal({
+                      view: "select_members",
+                      data: { context: "edit" },
+                    })
+                  }
+                  className="w-full bg-gray-800 text-gray-300 p-3 rounded font-bold flex justify-between items-center text-sm border border-gray-600 hover:bg-gray-700"
+                >
+                  <span>Modifica Destinatari:</span>
+                  <span className="text-white bg-gray-900 px-2 py-1 rounded">
+                    {editingMemberSelection.length} Selezionati
+                  </span>
+                </button>
+              )}
             <button className="w-full bg-blue-600 p-3 rounded font-bold hover:bg-blue-500">
               SALVA DATI
             </button>
           </form>
         )}
       </CustomModal>
+
       <CustomModal
         isOpen={modal.view === "confirm_purchase"}
         title="Riepilogo Chiusura"
@@ -757,7 +1009,13 @@ function App() {
               </div>
             </div>
             <div
-              className={`p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center ${modal.data.diff > 0 ? "bg-red-900/10 border-red-500/30 text-red-400" : modal.data.diff < 0 ? "bg-green-900/10 border-green-500/30 text-green-400" : "bg-gray-800/50 border-gray-600 text-gray-300"}`}
+              className={`p-6 rounded-xl border-2 flex flex-col items-center justify-center text-center ${
+                modal.data.diff > 0
+                  ? "bg-red-900/10 border-red-500/30 text-red-400"
+                  : modal.data.diff < 0
+                    ? "bg-green-900/10 border-green-500/30 text-green-400"
+                    : "bg-gray-800/50 border-gray-600 text-gray-300"
+              }`}
             >
               <h4 className="font-bold text-lg uppercase tracking-wider mb-1">
                 {modal.data.diff > 0
@@ -945,12 +1203,112 @@ function App() {
           </div>
         </form>
       </CustomModal>
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_fondo"}
+        title="Storno Movimento"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleDeleteMovimentoFondo}
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
+            >
+              CONFERMA STORNO
+            </button>
+          </>
+        }
+      >
+        <p>
+          Attenzione: stai per eliminare definitivamente questo movimento dal
+          Fondo Cassa. L'operazione ricalcolerà il saldo.
+        </p>
+      </CustomModal>
+
+      <CustomModal
+        isOpen={modal.view === "confirm_delete_fondo"}
+        title="Storno Movimento"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded bg-transparent hover:bg-white/10 font-bold"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleDeleteMovimentoFondo}
+              className="px-4 py-2 rounded bg-red-600 hover:bg-red-500 font-bold text-white shadow-lg"
+            >
+              CONFERMA STORNO
+            </button>
+          </>
+        }
+      >
+        <p>
+          Attenzione: stai per eliminare definitivamente questo movimento dal
+          Fondo Cassa. L'operazione ricalcolerà il saldo.
+        </p>
+      </CustomModal>
+
+      <CustomModal
+        isOpen={modal.view === "confirm_reset_annual"}
+        title="Conferma Reset Annuale"
+        onClose={() => setModal({ view: "none" })}
+        variant="danger"
+        actions={
+          <>
+            <button
+              onClick={() => setModal({ view: "none" })}
+              className="px-4 py-2 rounded font-bold hover:bg-white/10"
+            >
+              Annulla
+            </button>
+            <button
+              onClick={handleResetAnnualData}
+              className="bg-red-600 text-white px-4 py-2 rounded font-bold shadow-lg hover:bg-red-500"
+            >
+              CONFERMA E AZZERA
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-lg font-bold text-red-400">SEI DAVVERO SICURO?</p>
+          <p>Questa operazione:</p>
+          <ul className="list-disc list-inside text-gray-300 ml-2">
+            <li>
+              Cancellerà <b>TUTTI</b> i movimenti di acquisto.
+            </li>
+            <li>
+              Cancellerà <b>TUTTO</b> lo storico del fondo cassa.
+            </li>
+            <li>
+              Manterrà <b>SOLO</b> l'anagrafica dei membri.
+            </li>
+          </ul>
+          <p className="text-sm text-gray-400 mt-4">
+            Verrà creato un backup di sicurezza prima di procedere, ma
+            l'operazione è drastica.
+          </p>
+        </div>
+      </CustomModal>
+
+      {/* --- MODALE EXCEL BANK (VECCHIO, PER I SALDI) --- */}
       {modal.view === "excel_bank" && (
         <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8">
           <div className="bg-gray-900 w-full max-w-6xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden">
             <div className="p-6 border-b border-gray-700 flex justify-between bg-gray-800">
               <h3 className="text-xl font-bold flex items-center text-green-500">
-                <FileSpreadsheet className="mr-2" /> Importazione Banca
+                <FileSpreadsheet className="mr-2" /> Salda Debiti da Banca
               </h3>
               <button onClick={() => setModal({ view: "none" })}>
                 <X size={24} />
@@ -1024,7 +1382,11 @@ function App() {
                   {filteredExcelMatches.map((m) => (
                     <tr
                       key={m.originalIndex}
-                      className={`border-b border-gray-800 cursor-pointer transition-colors ${selectedMatches.includes(m.originalIndex) ? "bg-green-900/20 hover:bg-green-900/30" : "hover:bg-gray-800/50"}`}
+                      className={`border-b border-gray-800 cursor-pointer transition-colors ${
+                        selectedMatches.includes(m.originalIndex)
+                          ? "bg-green-900/20 hover:bg-green-900/30"
+                          : "hover:bg-gray-800/50"
+                      }`}
                       onClick={() =>
                         setSelectedMatches((prev) =>
                           prev.includes(m.originalIndex)
@@ -1073,6 +1435,169 @@ function App() {
         </div>
       )}
 
+      {/* --- MODALE WIZARD IMPORTAZIONE (NUOVO STILE) --- */}
+      {modal.view === "import_creation_wizard" && (
+        <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-8">
+          <div className="bg-gray-900 w-full max-w-6xl h-[90vh] rounded-2xl border border-gray-700 shadow-2xl flex flex-col overflow-hidden">
+            <div className="p-6 border-b border-gray-700 flex justify-between bg-gray-800">
+              <h3 className="text-xl font-bold flex items-center text-green-500">
+                <FileSpreadsheet className="mr-2" /> Seleziona Partecipanti da
+                Excel
+              </h3>
+              <button onClick={() => setModal({ view: "none" })}>
+                <X size={24} />
+              </button>
+            </div>
+
+            {/* FILTRI SUPERIORI (Stile uguale all'altro) */}
+            <div className="p-4 bg-gray-800/50 border-b border-gray-700 flex flex-wrap gap-4 items-center justify-between">
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() =>
+                    setSelectedMatchesForCreation(
+                      filteredWizardMatches.map((m) => m.originalIndex),
+                    )
+                  }
+                  className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded flex items-center"
+                >
+                  <ListChecks size={14} className="mr-1" /> TUTTI VISIBILI
+                </button>
+                <button
+                  onClick={() => setSelectedMatchesForCreation([])}
+                  className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded flex items-center"
+                >
+                  <X size={14} className="mr-1" /> NESSUNO
+                </button>
+                <div className="h-8 w-px bg-gray-700 mx-2"></div>
+                <div className="flex items-center gap-2">
+                  <CalendarDays size={16} className="text-gray-500" />
+                  <input
+                    type="date"
+                    className="bg-black border border-gray-600 rounded p-1 text-sm text-gray-300"
+                    value={wizardDateStart}
+                    onChange={(e) => setWizardDateStart(e.target.value)}
+                  />
+                  <span className="text-gray-600">-</span>
+                  <input
+                    type="date"
+                    className="bg-black border border-gray-600 rounded p-1 text-sm text-gray-300"
+                    value={wizardDateEnd}
+                    onChange={(e) => setWizardDateEnd(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="relative">
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500"
+                  size={16}
+                />
+                <input
+                  type="text"
+                  placeholder="Cerca..."
+                  className="bg-black border border-gray-600 rounded-full pl-10 pr-4 py-2 text-sm w-48 focus:border-green-500 outline-none"
+                  value={wizardSearch}
+                  onChange={(e) => setWizardSearch(e.target.value)}
+                />
+              </div>
+            </div>
+
+            {/* BARRA OPZIONI (Mark as Paid) */}
+            <div className="p-3 bg-blue-900/20 border-b border-gray-700 flex justify-between items-center">
+              <label className="flex items-center cursor-pointer text-sm hover:text-white text-gray-300 select-none">
+                <input
+                  type="checkbox"
+                  checked={markAsPaid}
+                  onChange={(e) => setMarkAsPaid(e.target.checked)}
+                  className="mr-3 w-5 h-5 accent-green-500"
+                />
+                Registra come già pagati (Usa importo Excel come versato)
+              </label>
+              <div className="text-sm text-gray-400">
+                Selezionati:{" "}
+                <b className="text-white">
+                  {selectedMatchesForCreation.length}
+                </b>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-0">
+              <table className="w-full text-left border-collapse">
+                <thead className="text-gray-500 uppercase text-xs sticky top-0 bg-gray-900 z-10 shadow-sm">
+                  <tr>
+                    <th className="p-4 w-10 text-center">✓</th>
+                    <th className="p-4">Data</th>
+                    <th className="p-4">Membro Riconosciuto</th>
+                    <th className="p-4">Importo</th>
+                    <th className="p-4">Dettaglio Originale</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredWizardMatches.length > 0 ? (
+                    filteredWizardMatches.map((m) => (
+                      <tr
+                        key={m.originalIndex}
+                        className={`border-b border-gray-800 cursor-pointer transition-colors ${
+                          selectedMatchesForCreation.includes(m.originalIndex)
+                            ? "bg-green-900/20 hover:bg-green-900/30"
+                            : "hover:bg-gray-800/50"
+                        }`}
+                        onClick={() =>
+                          setSelectedMatchesForCreation((prev) =>
+                            prev.includes(m.originalIndex)
+                              ? prev.filter((x) => x !== m.originalIndex)
+                              : [...prev, m.originalIndex],
+                          )
+                        }
+                      >
+                        <td className="p-4 text-center">
+                          <input
+                            type="checkbox"
+                            checked={selectedMatchesForCreation.includes(
+                              m.originalIndex,
+                            )}
+                            readOnly
+                            className="accent-green-500 w-4 h-4 cursor-pointer"
+                          />
+                        </td>
+                        <td className="p-4 text-gray-400 text-xs">
+                          {m.data_movimento
+                            ? new Date(m.data_movimento).toLocaleDateString()
+                            : "-"}
+                        </td>
+                        <td className="p-4 font-bold text-white">
+                          {m.nome_trovato}
+                        </td>
+                        <td className="p-4 font-mono text-green-400 font-bold">
+                          {formatCurrency(m.importo_trovato)}
+                        </td>
+                        <td className="p-4 text-xs text-gray-500 truncate max-w-lg font-mono">
+                          {m.linea_originale}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="p-8 text-center text-gray-500">
+                        Nessun risultato trovato con i filtri attuali.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-6 border-t border-gray-700 bg-gray-800 flex justify-end">
+              <button
+                onClick={confirmCreationFromBank}
+                className="bg-blue-600 hover:bg-blue-500 px-8 py-3 rounded-lg font-bold shadow-lg text-white"
+              >
+                CONFERMA SELEZIONE
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SIDEBAR */}
       <aside className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col p-4">
         <h1 className="text-xl font-bold mb-8 px-2 text-green-500 flex items-center">
@@ -1086,7 +1611,11 @@ function App() {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`flex items-center w-full p-3 rounded-lg transition capitalize ${activeTab === tab ? "bg-blue-600 text-white shadow-lg" : "text-gray-400 hover:bg-gray-800"}`}
+              className={`flex items-center w-full p-3 rounded-lg transition capitalize ${
+                activeTab === tab
+                  ? "bg-blue-600 text-white shadow-lg"
+                  : "text-gray-400 hover:bg-gray-800"
+              }`}
             >
               {tab === "dashboard" && (
                 <LayoutDashboard size={20} className="mr-3" />
@@ -1100,7 +1629,11 @@ function App() {
           ))}
           <button
             onClick={() => setActiveTab("guida")}
-            className={`flex items-center w-full p-3 rounded-lg transition capitalize ${activeTab === "guida" ? "bg-blue-600 text-white shadow-lg" : "text-gray-400 hover:bg-gray-800"}`}
+            className={`flex items-center w-full p-3 rounded-lg transition capitalize ${
+              activeTab === "guida"
+                ? "bg-blue-600 text-white shadow-lg"
+                : "text-gray-400 hover:bg-gray-800"
+            }`}
           >
             <Book size={20} className="mr-3" /> Guida & Privacy
           </button>
@@ -1108,7 +1641,11 @@ function App() {
         <div className="mt-auto border-t border-gray-800 pt-4 space-y-2">
           <button
             onClick={() => setActiveTab("settings")}
-            className={`flex items-center w-full p-3 rounded-lg transition ${activeTab === "settings" ? "bg-gray-800 text-white" : "text-gray-400 hover:bg-gray-800"}`}
+            className={`flex items-center w-full p-3 rounded-lg transition ${
+              activeTab === "settings"
+                ? "bg-gray-800 text-white"
+                : "text-gray-400 hover:bg-gray-800"
+            }`}
           >
             <Settings size={20} className="mr-3" /> Impostazioni
           </button>
@@ -1168,14 +1705,14 @@ function App() {
                     <th className="p-4">Data</th>
                     <th className="p-4">Descrizione</th>
                     <th className="p-4 text-right">Importo</th>
-                    <th className="p-4 w-10"></th>
+                    <th className="p-4 w-20 text-right">Azioni</th>
                   </tr>
                 </thead>
                 <tbody>
                   {visibleFondo.map((m: any) => (
                     <tr
                       key={m.unique_id}
-                      className="border-b border-gray-800 hover:bg-gray-800/30 group"
+                      className="border-b border-gray-800 group hover:bg-gray-800/30 transition-colors"
                     >
                       <td className="p-4 text-gray-400">
                         {new Date(m.data).toLocaleDateString()}
@@ -1189,10 +1726,28 @@ function App() {
                         {m.importo > 0 ? "+" : ""}
                         {formatCurrency(m.importo)}
                       </td>
-                      <td className="p-4 text-right">
+                      <td className="p-4 text-right flex justify-end gap-2">
+                        {/* Tasto Delete SOLO per Fondo Cassa (F-...) */}
+                        {m.unique_id.startsWith("F-") && (
+                          <button
+                            onClick={() =>
+                              setModal({
+                                view: "confirm_delete_fondo",
+                                data: {
+                                  id: parseInt(m.unique_id.substring(2)),
+                                },
+                              })
+                            }
+                            className="text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"
+                            title="Elimina definitivamente (Storno)"
+                          >
+                            <Trash2 size={18} />
+                          </button>
+                        )}
+                        {/* Tasto Nascondi */}
                         <button
                           onClick={() => toggleRowVisibility(m.unique_id)}
-                          className="text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition"
+                          className="text-gray-600 hover:text-white opacity-0 group-hover:opacity-100 transition"
                           title="Nascondi dalla dashboard"
                         >
                           <EyeOff size={18} />
@@ -1203,6 +1758,7 @@ function App() {
                 </tbody>
               </table>
             </div>
+
             {/* SEZIONE COMPATTATA PER I NASCOSTI */}
             {hiddenFondo.length > 0 && (
               <div className="opacity-80">
@@ -1255,6 +1811,209 @@ function App() {
           </div>
         )}
 
+        {/* GUIDA TAB (RISCRITTA) */}
+        {activeTab === "guida" && (
+          <div className="max-w-5xl mx-auto space-y-12 animate-in slide-in-from-bottom duration-500">
+            {/* Header Guida */}
+            <div className="text-center mb-12">
+              <h2 className="text-4xl font-bold mb-4 text-white">
+                Manuale d'Uso
+              </h2>
+              <p className="text-gray-400">
+                Benvenuto nel gestionale di Tesoreria. Ecco come iniziare in
+                pochi passi.
+              </p>
+            </div>
+
+            {/* Step 1: Membri */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+              <div>
+                <div className="bg-blue-900/20 text-blue-400 font-bold px-3 py-1 rounded inline-block mb-4">
+                  PASSO 1
+                </div>
+                <h3 className="text-2xl font-bold mb-3 flex items-center">
+                  <Users className="mr-3" /> Gestione Membri
+                </h3>
+                <p className="text-gray-300 leading-relaxed mb-4">
+                  Prima di tutto, devi popolare il database con i tuoi soci.
+                  Puoi farlo in due modi:
+                </p>
+                <ul className="list-disc list-inside text-gray-400 space-y-2">
+                  <li>
+                    <b className="text-white">Manualmente:</b> Inserisci nome,
+                    cognome e matricola nel form dedicato.
+                  </li>
+                  <li>
+                    <b className="text-white">Import Excel:</b> Carica un file
+                    `.xlsx` contenente le colonne "NOME" e "COGNOME". Il sistema
+                    li importerà automaticamente.
+                  </li>
+                </ul>
+              </div>
+              <div className="bg-gray-900 p-6 rounded-xl border border-gray-800">
+                <div className="flex items-center text-yellow-500 mb-2 font-bold">
+                  <Info size={18} className="mr-2" /> Nota Bene
+                </div>
+                <p className="text-sm text-gray-400">
+                  L'eliminazione di un membro è "logica": i suoi dati vengono
+                  nascosti ma non cancellati per preservare lo storico dei
+                  pagamenti passati.
+                </p>
+              </div>
+            </div>
+
+            <hr className="border-gray-800" />
+
+            {/* Step 2: Movimenti */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+              <div>
+                <div className="bg-green-900/20 text-green-400 font-bold px-3 py-1 rounded inline-block mb-4">
+                  PASSO 2
+                </div>
+                <h3 className="text-2xl font-bold mb-3 flex items-center">
+                  <ShoppingCart className="mr-3" /> Creazione Movimenti
+                </h3>
+                <p className="text-gray-300 leading-relaxed mb-4">
+                  Un "Movimento" è qualsiasi operazione che coinvolge denaro.
+                  Scegli il tipo corretto:
+                </p>
+                <ul className="space-y-4">
+                  <li className="bg-gray-900 p-4 rounded border border-gray-800">
+                    <strong className="text-white block mb-1">
+                      Acquisto Standard
+                    </strong>
+                    <span className="text-gray-400 text-sm">
+                      Spese divise tra i soci (es. Felpe, Cene). Genera un
+                      debito per ogni membro selezionato.
+                    </span>
+                  </li>
+                  <li className="bg-gray-900 p-4 rounded border border-gray-800">
+                    <strong className="text-white block mb-1">
+                      Spesa Fondo (Diretta)
+                    </strong>
+                    <span className="text-gray-400 text-sm">
+                      Uscite immediate dalla cassa per spese comuni (es.
+                      Cancelleria, Sito Web). Non tocca i conti dei singoli
+                      soci.
+                    </span>
+                  </li>
+                  <li className="bg-gray-900 p-4 rounded border border-gray-800">
+                    <strong className="text-white block mb-1">
+                      Raccolta Fondo
+                    </strong>
+                    <span className="text-gray-400 text-sm">
+                      Entrate richieste ai soci (es. Quota associativa annuale).
+                    </span>
+                  </li>
+                </ul>
+              </div>
+              <div className="space-y-6">
+                <div className="bg-gray-900 p-6 rounded-xl border border-gray-800">
+                  <h4 className="font-bold text-white mb-2 flex items-center">
+                    <FileSpreadsheet
+                      size={18}
+                      className="mr-2 text-green-500"
+                    />
+                    Novità: Importazione da Banca
+                  </h4>
+                  <p className="text-sm text-gray-400 mb-3">
+                    Quando crei un movimento, puoi caricare l'estratto conto
+                    bancario (Excel). Il sistema cercherà automaticamente i nomi
+                    dei soci nella descrizione dei bonifici.
+                  </p>
+                  <p className="text-sm text-gray-400">
+                    Se selezioni <b>"Registra come GIÀ PAGATI"</b>, il sistema
+                    segnerà automaticamente che quei soci hanno già saldato la
+                    loro quota.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <hr className="border-gray-800" />
+
+            {/* Step 3: Gestione Quote */}
+            <div>
+              <div className="bg-purple-900/20 text-purple-400 font-bold px-3 py-1 rounded inline-block mb-4">
+                PASSO 3
+              </div>
+              <h3 className="text-2xl font-bold mb-3 flex items-center">
+                <Edit2 className="mr-3" /> Gestione Quote e Saldi
+              </h3>
+              <p className="text-gray-300 leading-relaxed max-w-3xl">
+                Una volta creato un movimento, selezionalo dalla lista. A destra
+                vedrai l'elenco di chi deve pagare.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <div className="bg-gray-900 p-4 rounded border border-gray-800">
+                  <strong className="text-white">Modifica Quote</strong>
+                  <p className="text-sm text-gray-400 mt-2">
+                    Usa i tasti + e - per cambiare la quantità se un socio ha
+                    preso più pezzi (es. 2 magliette).
+                  </p>
+                </div>
+                <div className="bg-gray-900 p-4 rounded border border-gray-800">
+                  <strong className="text-white">Registra Pagamento</strong>
+                  <p className="text-sm text-gray-400 mt-2">
+                    Scrivi l'importo nella casella "Versato" quando ricevi i
+                    soldi (contanti o altro).
+                  </p>
+                </div>
+                <div className="bg-gray-900 p-4 rounded border border-gray-800">
+                  <strong className="text-white">Import Banca</strong>
+                  <p className="text-sm text-gray-400 mt-2">
+                    Usa il tasto "Banca" per caricare un Excel e far saldare
+                    automaticamente chi ha fatto il bonifico.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Privacy Policy */}
+            <div className="mt-16 pt-8 border-t-2 border-gray-800">
+              <h2 className="text-3xl font-bold mb-6 flex items-center">
+                <ShieldCheck className="mr-3 text-green-500" /> Informativa
+                Privacy e Sicurezza
+              </h2>
+              <div className="bg-gray-900 p-8 rounded-2xl border border-gray-800 text-gray-300 text-sm space-y-4">
+                <p>
+                  <strong>1. Natura Offline del Software</strong>
+                  <br />
+                  Questa applicazione opera in modalità completamente offline.
+                  Nessun dato viene mai inviato a server esterni, cloud o terze
+                  parti. L'intero database risiede fisicamente sul disco rigido
+                  della macchina in uso.
+                </p>
+                <p>
+                  <strong>2. Localizzazione dei Dati</strong>
+                  <br />
+                  Tutti i dati sensibili (nomi, cognomi, transazioni
+                  finanziarie) sono salvati in un database SQLite criptato
+                  situato nella cartella utente del sistema operativo (
+                  <code>%APPDATA%</code> su Windows).
+                </p>
+                <p>
+                  <strong>3. Responsabilità e Backup</strong>
+                  <br />
+                  Il sistema esegue backup automatici locali ad ogni avvio.
+                  Tuttavia, essendo i dati residenti sul dispositivo, è
+                  responsabilità esclusiva dell'utente proteggere l'accesso al
+                  computer e provvedere a copie di sicurezza esterne se
+                  necessario.
+                </p>
+                <p>
+                  <strong>4. Conformità</strong>
+                  <br />
+                  Il software è uno strumento di ausilio alla gestione
+                  contabile. L'operatore che utilizza il software agisce in
+                  qualità di Titolare del Trattamento dei dati inseriti.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ALTRE TAB INVARIATE */}
         {activeTab === "movimenti" && (
           <div className="grid grid-cols-12 gap-8 h-full">
             <div className="col-span-4 flex flex-col h-full overflow-hidden">
@@ -1270,6 +2029,7 @@ function App() {
                     setNewAcq({ ...newAcq, nome: e.target.value })
                   }
                 />
+
                 <div className="relative">
                   <select
                     value={newAcqType}
@@ -1283,11 +2043,29 @@ function App() {
                     <option value="raccolta_fondo">
                       RACCOLTA FONDO (Entrata)
                     </option>
+                    <option value="storico">STORICO (Solo Memoria)</option>
                   </select>
                   <div className="absolute right-3 top-1/2 transform -translate-y-1/2 pointer-events-none text-gray-500">
                     ▼
                   </div>
                 </div>
+
+                {/* DATA INPUT (Solo per Storico) */}
+                {newAcqType === "storico" && (
+                  <div className="flex flex-col">
+                    <label className="text-xs text-gray-500 font-bold mb-1">
+                      DATA TRANSAZIONE
+                    </label>
+                    <input
+                      type="date"
+                      className="w-full bg-black p-3 rounded border border-gray-700 text-white focus:border-blue-500 outline-none"
+                      value={newAcqDate}
+                      onChange={(e) => setNewAcqDate(e.target.value)}
+                      required
+                    />
+                  </div>
+                )}
+
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1303,7 +2081,8 @@ function App() {
                     }
                   />
                   {newAcqType !== "raccolta_fondo" &&
-                    newAcqType !== "spesa_fondo" && (
+                    newAcqType !== "spesa_fondo" &&
+                    newAcqType !== "storico" && (
                       <input
                         type="number"
                         placeholder="Acconto"
@@ -1315,24 +2094,35 @@ function App() {
                       />
                     )}
                 </div>
-                {newAcqType !== "spesa_fondo" && (
-                  <button
-                    onClick={() =>
-                      setModal({
-                        view: "select_members",
-                        data: { context: "create" },
-                      })
-                    }
-                    className="w-full bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 p-3 rounded font-bold transition flex justify-between items-center text-sm"
-                  >
-                    <span>Destinatari:</span>
-                    <span className="text-white bg-gray-900 px-2 py-1 rounded">
-                      {selectedMembersForPurchase.length === 0
-                        ? "TUTTI"
-                        : `${selectedMembersForPurchase.length} Selezionati`}
-                    </span>
-                  </button>
+
+                {newAcqType !== "spesa_fondo" && newAcqType !== "storico" && (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() =>
+                        setModal({
+                          view: "select_members",
+                          data: { context: "create" },
+                        })
+                      }
+                      className="flex-1 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-300 p-3 rounded font-bold transition flex justify-between items-center text-sm"
+                    >
+                      <span>Manuale:</span>
+                      <span className="text-white bg-gray-900 px-2 py-1 rounded">
+                        {selectedMembersForPurchase.length === 0
+                          ? "TUTTI"
+                          : `${selectedMembersForPurchase.length} Scelti`}
+                      </span>
+                    </button>
+                    <button
+                      onClick={handleBankImportForCreation}
+                      className="bg-green-800 hover:bg-green-700 text-white px-4 rounded font-bold border border-green-600 flex items-center justify-center"
+                      title="Importa da Excel Banca"
+                    >
+                      <FileSpreadsheet size={20} />
+                    </button>
+                  </div>
                 )}
+
                 <button
                   onClick={handleSaveAcquisto}
                   className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded font-bold transition"
@@ -1345,7 +2135,11 @@ function App() {
                   <div
                     key={a.id}
                     onClick={() => selectAcquistoAndReset(a)}
-                    className={`p-4 rounded border cursor-pointer flex justify-between items-center transition ${selectedAcquisto?.id === a.id ? "border-blue-500 bg-blue-900/20" : "border-gray-800 bg-gray-900 hover:bg-gray-800"}`}
+                    className={`p-4 rounded border cursor-pointer flex justify-between items-center transition ${
+                      selectedAcquisto?.id === a.id
+                        ? "border-blue-500 bg-blue-900/20"
+                        : "border-gray-800 bg-gray-900 hover:bg-gray-800"
+                    }`}
                   >
                     <div>
                       <p className="font-bold text-white">{a.nome_acquisto}</p>
@@ -1581,70 +2375,78 @@ function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {filteredQuote.length > 0 &&
-                            filteredQuote.map((q: any) => {
-                              const dov =
-                                q.quantita * selectedAcquisto.prezzo_unitario;
-                              const isDisabled =
-                                selectedAcquisto.completato && !isEditingQuotes;
-                              return (
-                                <tr
-                                  key={q.id}
-                                  className="border-b border-gray-800 hover:bg-gray-800/30"
-                                >
-                                  <td className="p-4">
-                                    <div className="font-bold text-base text-white">
-                                      {q.cognome} {q.nome}
+                          {filteredQuote.map((q: any) => {
+                            const dov =
+                              q.quantita * selectedAcquisto.prezzo_unitario;
+                            const isDisabled =
+                              selectedAcquisto.completato && !isEditingQuotes;
+                            return (
+                              <tr
+                                key={q.id}
+                                className="border-b border-gray-800 hover:bg-gray-800/30"
+                              >
+                                <td className="p-4">
+                                  <div className="font-bold text-base text-white">
+                                    {q.cognome} {q.nome}
+                                  </div>
+                                  {q.matricola && (
+                                    <div className="font-mono text-xs text-blue-300">
+                                      {q.matricola}
                                     </div>
-                                    {q.matricola && (
-                                      <div className="font-mono text-xs text-blue-300">
-                                        {q.matricola}
-                                      </div>
+                                  )}
+                                </td>
+                                <td className="p-4 text-center">
+                                  <div className="flex justify-center">
+                                    {selectedAcquisto.tipo ===
+                                    "raccolta_fondo" ? (
+                                      <span className="text-gray-500 font-bold">
+                                        -
+                                      </span>
+                                    ) : (
+                                      <QuantityControl
+                                        value={q.quantita}
+                                        onChange={(v) =>
+                                          handleUpdateQuotaUser(
+                                            q,
+                                            "quantita",
+                                            v,
+                                          )
+                                        }
+                                        disabled={isDisabled}
+                                      />
                                     )}
-                                  </td>
-                                  <td className="p-4 text-center">
-                                    <div className="flex justify-center">
-                                      {selectedAcquisto.tipo ===
-                                      "raccolta_fondo" ? (
-                                        <span className="text-gray-500 font-bold">
-                                          -
-                                        </span>
-                                      ) : (
-                                        <QuantityControl
-                                          value={q.quantita}
-                                          onChange={(v) =>
-                                            handleUpdateQuotaUser(
-                                              q,
-                                              "quantita",
-                                              v,
-                                            )
-                                          }
-                                          disabled={isDisabled}
-                                        />
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="p-4 text-right font-mono font-bold text-white">
-                                    {formatCurrency(dov)}
-                                  </td>
-                                  <td className="p-4 text-right">
-                                    <input
-                                      type="number"
-                                      disabled={isDisabled}
-                                      className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${q.importo_versato < 0 || q.importo_versato > dov ? "border-red-500 text-red-500" : "border-gray-700 text-white focus:border-blue-500"} ${isDisabled ? "opacity-50 cursor-not-allowed" : ""}`}
-                                      value={q.importo_versato}
-                                      onChange={(e) =>
-                                        handleUpdateQuotaUser(
-                                          q,
-                                          "importo_versato",
-                                          e.target.value,
-                                        )
-                                      }
-                                    />
-                                  </td>
-                                </tr>
-                              );
-                            })}
+                                  </div>
+                                </td>
+                                <td className="p-4 text-right font-mono font-bold text-white">
+                                  {formatCurrency(dov)}
+                                </td>
+                                <td className="p-4 text-right">
+                                  <input
+                                    type="number"
+                                    disabled={isDisabled}
+                                    className={`bg-black border rounded p-2 w-24 text-right font-bold text-lg outline-none ${
+                                      q.importo_versato < 0 ||
+                                      q.importo_versato > dov
+                                        ? "border-red-500 text-red-500"
+                                        : "border-gray-700 text-white focus:border-blue-500"
+                                    } ${
+                                      isDisabled
+                                        ? "opacity-50 cursor-not-allowed"
+                                        : ""
+                                    }`}
+                                    value={q.importo_versato}
+                                    onChange={(e) =>
+                                      handleUpdateQuotaUser(
+                                        q,
+                                        "importo_versato",
+                                        e.target.value,
+                                      )
+                                    }
+                                  />
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     )}
@@ -1670,6 +2472,14 @@ function App() {
                 >
                   <Trash2 className="mr-2" size={16} /> ELIMINA TUTTI
                 </button>
+
+                <button
+                  onClick={handleExportMembri}
+                  className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center font-bold"
+                >
+                  <FileSpreadsheet className="mr-2" size={18} /> Esporta Lista
+                </button>
+
                 <button
                   onClick={handleImportMembriExcel}
                   className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded flex items-center font-bold"
@@ -1680,7 +2490,11 @@ function App() {
             </div>
             <form
               onSubmit={handleSaveMembro}
-              className={`p-6 rounded-xl border mb-8 grid grid-cols-1 md:grid-cols-4 gap-4 items-end transition-colors ${editingMembroId ? "bg-blue-900/20 border-blue-500" : "bg-gray-900 border-gray-800"}`}
+              className={`p-6 rounded-xl border mb-8 grid grid-cols-1 md:grid-cols-4 gap-4 items-end transition-colors ${
+                editingMembroId
+                  ? "bg-blue-900/20 border-blue-500"
+                  : "bg-gray-900 border-gray-800"
+              }`}
             >
               <div>
                 <label className="text-xs font-bold text-gray-500 block mb-1">
@@ -1741,7 +2555,11 @@ function App() {
                 )}
                 <button
                   type="submit"
-                  className={`${editingMembroId ? "bg-blue-600 hover:bg-blue-500" : "bg-green-600 hover:bg-green-500"} text-white p-3 rounded font-bold flex-1`}
+                  className={`${
+                    editingMembroId
+                      ? "bg-blue-600 hover:bg-blue-500"
+                      : "bg-green-600 hover:bg-green-500"
+                  } text-white p-3 rounded font-bold flex-1`}
                 >
                   {editingMembroId ? "SALVA" : "AGGIUNGI"}
                 </button>
@@ -1799,10 +2617,48 @@ function App() {
             <h2 className="text-3xl font-bold mb-8 text-white">
               Amministrazione
             </h2>
+
+            {/* NUOVO PANNELLO AZIONI RAPIDE */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <div className="bg-gray-900 p-6 rounded-2xl border border-gray-800">
+                <h3 className="text-xl font-bold text-white mb-2">
+                  Sicurezza Dati
+                </h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Esegui un backup manuale istantaneo prima di operazioni
+                  importanti.
+                </p>
+                <button
+                  onClick={handleManualBackup}
+                  className="w-full bg-blue-600 hover:bg-blue-500 text-white p-3 rounded font-bold transition flex items-center justify-center"
+                >
+                  <Save className="mr-2" size={18} /> BACKUP ADESSO
+                </button>
+              </div>
+
+              <div className="bg-red-900/10 p-6 rounded-2xl border border-red-900/30">
+                <h3 className="text-xl font-bold text-red-400 mb-2">
+                  Zona Pericolo
+                </h3>
+                <p className="text-gray-400 text-sm mb-4">
+                  Azzera tutti i movimenti e il fondo cassa per il nuovo anno.{" "}
+                  <b className="text-white">I membri NON vengono cancellati.</b>{" "}
+                  Viene creato un backup automatico prima di procedere.
+                </p>
+                <button
+                  onClick={() => setModal({ view: "confirm_reset_annual" })}
+                  className="w-full bg-red-900/50 hover:bg-red-900 text-red-200 border border-red-800 p-3 rounded font-bold transition flex items-center justify-center"
+                >
+                  <AlertTriangle className="mr-2" size={18} /> NUOVO ANNO
+                  CONTABILE
+                </button>
+              </div>
+            </div>
+
             <div className="bg-gray-900 p-8 rounded-2xl border border-gray-800">
               <div className="flex justify-between items-center mb-6">
                 <h3 className="text-xl font-bold text-blue-400">
-                  Punti di Ripristino e Log
+                  Storico Backup e Log
                 </h3>
                 <div className="flex space-x-3">
                   <button
@@ -1842,78 +2698,6 @@ function App() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
-        {activeTab === "guida" && (
-          <div className="max-w-4xl mx-auto space-y-8">
-            <div>
-              <h2 className="text-3xl font-bold mb-6 flex items-center">
-                <Book className="mr-3 text-blue-500" /> Guida Rapida
-              </h2>
-              <div className="bg-gray-900 p-8 rounded-2xl border border-gray-800 space-y-6 text-gray-300 leading-relaxed">
-                <section>
-                  <h3 className="text-xl font-bold text-white mb-2 flex items-center">
-                    <Users size={18} className="mr-2" /> Gestione Membri
-                  </h3>
-                  <p>
-                    Inserisci qui l'anagrafica. Puoi importare massivamente un
-                    file Excel. Se elimini un membro, questo viene solo
-                    "nascosto" per preservare lo storico dei pagamenti
-                    precedenti.
-                  </p>
-                </section>
-                <section>
-                  <h3 className="text-xl font-bold text-white mb-2 flex items-center">
-                    <ShoppingCart size={18} className="mr-2" /> Acquisti e Quote
-                  </h3>
-                  <p>
-                    Crea un evento/acquisto. Il sistema genera automaticamente
-                    una quota da pagare per ogni membro attivo. Puoi registrare
-                    i pagamenti manualmente o importando l'estratto conto della
-                    banca (Excel).
-                  </p>
-                </section>
-                <section>
-                  <h3 className="text-xl font-bold text-white mb-2 flex items-center">
-                    <Wallet size={18} className="mr-2" /> Fondo Cassa
-                  </h3>
-                  <p>
-                    In Dashboard puoi vedere il saldo reale (banca + contanti) e
-                    quello disponibile (al netto delle spese impegnate ma non
-                    ancora pagate). Usa "Gestione Fondo" per movimenti extra
-                    (donazioni, piccole spese cassa).
-                  </p>
-                </section>
-              </div>
-            </div>
-
-            <div>
-              <h2 className="text-3xl font-bold mb-6 flex items-center">
-                <ShieldCheck className="mr-3 text-green-500" /> Privacy Policy
-              </h2>
-              <div className="bg-gray-900 p-8 rounded-2xl border border-gray-800 text-gray-300 text-sm">
-                <p className="mb-4">
-                  <strong>Ultimo aggiornamento:</strong>{" "}
-                  {new Date().toLocaleDateString()}
-                </p>
-                <p className="mb-2">
-                  1. <strong>Archiviazione Locale:</strong> Tutti i dati
-                  inseriti sono salvati <strong>esclusivamente</strong> sul
-                  disco locale di questo computer all'interno di un database
-                  SQLite.
-                </p>
-                <p className="mb-2">
-                  2. <strong>Backup:</strong> I backup vengono generati
-                  localmente nella cartella utente. È responsabilità dell'utente
-                  custodire tali file.
-                </p>
-                <p className="mb-2">
-                  3. <strong>Trattamento Dati:</strong> Il software agisce come
-                  strumento di ausilio contabile. L'operatore è il Titolare del
-                  Trattamento.
-                </p>
-              </div>
             </div>
           </div>
         )}
